@@ -1,0 +1,46 @@
+name: No AI attribution
+
+# Fails a PR if any of its commits, or its title or description, credits Claude or another
+# AI as a co-author. Required for merging into master, so none reaches the contributors list
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: No AI co-authors
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check commits, title and description
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          pattern='co-authored-by:.*(claude|anthropic)|generated with.*claude|noreply@anthropic\.com'
+          failed=0
+
+          for c in $(git rev-list "$BASE..$HEAD"); do
+            if git log -1 --format='%an <%ae>%n%cn <%ce>%n%B' "$c" | grep -qiE "$pattern"; then
+              echo "::error::Commit $(git log -1 --format='%h %s' "$c") credits Claude"
+              failed=1
+            fi
+          done
+
+          if printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -qiE "$pattern"; then
+            echo "::error::The PR title or description credits Claude"
+            failed=1
+          fi
+
+          if [ "$failed" = 1 ]; then
+            echo "Remove the line from the commit message (git commit --amend, or git rebase for older commits) and push again"
+            exit 1
+          fi
+          echo "No AI attribution found"
