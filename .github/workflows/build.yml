@@ -1,10 +1,13 @@
 name: Build
 
-# Every push and PR builds all three platforms. Every push to master, every night (when
-# there are new commits) and "Run workflow" also publish the builds as the "nightly"
-# GitHub release, replacing the last one. Nothing is published unless all three pass.
+# Pushes to master and PRs build all three platforms. Other branches build through their
+# PR, so a push to a PR's branch runs once, not twice; a branch without a PR builds with
+# "Run workflow". Every push to master, every night (when there are new commits) and "Run
+# workflow" also publish the builds as the "nightly" GitHub release, replacing the last
+# one. Nothing is published unless all three pass.
 on:
   push:
+    branches: [master]
   pull_request:
   schedule:
     - cron: "0 7 * * *"          # 07:00 UTC = 3 am Eastern (2 am in winter)
