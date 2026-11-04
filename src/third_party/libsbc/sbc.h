@@ -123,13 +123,13 @@ struct sbc_frame
 struct sbc_dstate
 {
     int idx;
-    int16_t alignas(sizeof(int)) v[2][SBC_MAX_SUBBANDS][10];
+    alignas(sizeof(int)) int16_t v[2][SBC_MAX_SUBBANDS][10];
 };
 
 struct sbc_estate
 {
     int idx;
-    int16_t alignas(sizeof(int)) x[2][SBC_MAX_SUBBANDS][5];
+    alignas(sizeof(int)) int16_t x[2][SBC_MAX_SUBBANDS][5];
     int32_t y[4];
 };
 

@@ -6,15 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 
-// sbc.h puts alignas where C allows it and C++ ignores it; the layout is the same either way
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wattributes"
-#endif
 #include "libsbc/sbc.h"
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
 
 namespace bt {
 
