@@ -187,7 +187,9 @@ jobs:
 
   macos:
     name: macOS (Apple Silicon)
-    runs-on: macos-latest        # Apple Silicon
+    # Pinned (Apple Silicon), not macos-latest: the build doesn't change when GitHub moves
+    # the alias, and if this image's runners are backed up, try another version (macos-14)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 
