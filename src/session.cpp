@@ -410,9 +410,13 @@ private:
         while ((n = connection.read(buffer, sizeof buffer)) > 0) {
             for (const packet::Bytes& bytes : decoder.feed(std::string_view(buffer, static_cast<size_t>(n)))) {
                 if (auto frame = packet::decode(bytes)) {
-                    // Show who it's for unless it's to everyone, e.g. an ack to this station
+                    // Show who it's for unless it's to everyone with no path, e.g. an ack to
+                    // this station. Then the digipeaters as direwolf shows them: a "*" on
+                    // ones that have repeated it, e.g. N8GM-7>APRS,WIDE1-1*,WIDE2-1
                     std::string from = frame->source;
-                    if (frame->destination != packet::groupAddress) from += ">" + frame->destination;
+                    if (frame->destination != packet::groupAddress || !frame->path.empty())
+                        from += ">" + frame->destination;
+                    for (const std::string& hop : frame->path) from += "," + hop;
                     events.push({Event::Type::Packet, Key::Char, 0, frame->info, from});
                 }
             }
