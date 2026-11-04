@@ -33,6 +33,28 @@ Json pttToJson(const Settings& s) {
     return ptt;
 }
 
+// address "" = off. The cables are Windows only (see Settings::btPlayAudio)
+Json bluetoothToJson(const Settings& s) {
+    return {{"address", s.bluetooth}, {"playAudio", s.btPlayAudio}, {"recordAudio", s.btRecordAudio}};
+}
+
+// "AA:BB:CC:DD:EE:FF" (any case, ':' or '-') -> upper case with ':'. "" if it isn't one
+std::string bluetoothAddress(const std::string& text) {
+    if (text.size() != 17) return "";
+    std::string out;
+    for (size_t i = 0; i < text.size(); i++) {
+        char c = text[i];
+        if (i % 3 == 2) {
+            if (c != ':' && c != '-') return "";
+            out += ':';
+        } else {
+            if (!std::isxdigit(static_cast<unsigned char>(c))) return "";
+            out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+    }
+    return out;
+}
+
 bool validIpv4(const std::string& host) {
     int parts = 0;
     size_t i = 0;
@@ -68,6 +90,7 @@ Json configToJson(const Settings& s) {
         {"path", s.path},
         {"rxAudio", s.rxAudio},
         {"txAudio", s.txAudio},
+        {"bluetooth", bluetoothToJson(s)},
         {"radio", radioToJson(s)},
         {"ptt", pttToJson(s)},
         {"retry", {{"tries", s.retryTries}, {"extraWaitSeconds", s.retryExtraWait}}},
@@ -119,6 +142,25 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
             std::string& desc = key == "rxAudio" ? s.rxAudioDesc : s.txAudioDesc;
             if (name != value.get<std::string>()) desc.clear();   // The old description no longer fits
             name = value.get<std::string>();
+        } else if (key == "bluetooth") {
+            if (!value.is_object()) return fail(key, "must be an object");
+            for (const auto& [field, fieldValue] : value.items()) {
+                if (field == "address") {
+                    if (!fieldValue.is_string()) return fail("bluetooth.address", "must be an address or \"\"");
+                    std::string text = fieldValue.get<std::string>();
+                    std::string address = bluetoothAddress(text);
+                    if (!text.empty() && address.empty())
+                        return fail("bluetooth.address", "must be like 38:D2:00:01:C0:AB, or \"\" for off");
+                    if (address != s.bluetooth) s.bluetoothName.clear();
+                    s.bluetooth = address;
+                    if (!address.empty()) s.ptt = PttType::Vox;   // The radio keys itself
+                } else if (field == "playAudio" || field == "recordAudio") {
+                    if (!fieldValue.is_string()) return fail("bluetooth." + field, "must be a sound card name");
+                    (field == "playAudio" ? s.btPlayAudio : s.btRecordAudio) = fieldValue.get<std::string>();
+                } else {
+                    return fail("bluetooth." + field, "unknown setting");
+                }
+            }
         } else if (key == "radio") {
             // Radio control (CAT): none, a radio on a serial port, or the user's own rigctld
             if (!value.is_object()) return fail(key, "must be an object");
@@ -225,7 +267,9 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
                              s.fx25 != settings.fx25 || s.rxAudio != settings.rxAudio ||
                              s.txAudio != settings.txAudio || s.catPort != settings.catPort ||
                              s.catBaud != settings.catBaud || s.rigModel != settings.rigModel ||
-                             s.ptt != settings.ptt || s.pttPort != settings.pttPort;
+                             s.ptt != settings.ptt || s.pttPort != settings.pttPort ||
+                             s.bluetooth != settings.bluetooth || s.btPlayAudio != settings.btPlayAudio ||
+                             s.btRecordAudio != settings.btRecordAudio;
     change.mainChanged = s.mainAddress != settings.mainAddress;
     settings = s;
     return change;
@@ -233,8 +277,13 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
 
 std::string missingConfig(const Settings& s) {
     if (packet::normalizeCallsign(s.callsign).empty()) return "callsign";
+    // Bluetooth on Linux and macOS brings its own sound card; on Windows it needs both
+    // ends of the virtual cables
+    if (!s.bluetooth.empty() && !bluetoothUsesSavedAudio()) return "";
     if (s.rxAudio.empty()) return "rxAudio";
     if (s.txAudio.empty()) return "txAudio";
+    if (!s.bluetooth.empty() && s.btPlayAudio.empty()) return "bluetooth.playAudio";
+    if (!s.bluetooth.empty() && s.btRecordAudio.empty()) return "bluetooth.recordAudio";
     return "";
 }
 

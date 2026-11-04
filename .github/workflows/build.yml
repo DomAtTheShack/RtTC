@@ -120,6 +120,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential ninja-build pkg-config libasound2-dev libusb-1.0-0-dev libudev-dev
+          # Bluetooth audio: BlueZ's SDP library and PulseAudio's simple API
+          sudo apt-get install -y libbluetooth-dev libpulse-dev
           # Only for the audio tests, which decode tests/audio with them
           sudo apt-get install -y minimodem direwolf
           # CMakeLists.txt asks for CMake 4.1 or newer, newer than Ubuntu's
@@ -280,7 +282,8 @@ jobs:
           has to be installed separately (Cygwin build).
 
           **Linux:** \`tar xzf\`, then \`./RadioConnectorCli\`. Hamlib and libusb are built in.
-          Needs ALSA, and minimodem and/or direwolf (see APT-PACKAGES.txt).
+          Needs ALSA, and minimodem and/or direwolf (see APT-PACKAGES.txt). Bluetooth
+          audio also needs libbluetooth3 and PulseAudio or PipeWire.
 
           **macOS (Apple Silicon):** Hamlib and libusb are built in.
           \`brew install minimodem direwolf && brew services start pulseaudio\`,

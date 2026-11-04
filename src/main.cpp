@@ -22,6 +22,10 @@
 #include "session.h"
 #include "settings.h"
 #include "testcases.h"
+#ifdef RTC_BLUETOOTH
+#include "Bluetooth/bt_audio.h"
+#include "Bluetooth/bt_protocol.h"
+#endif
 
 using std::string;
 using std::vector;
@@ -162,6 +166,134 @@ std::optional<vector<string>> resolveAudio(Settings& settings, bool playback) {
     return audioArgsFor(*name, playback);
 }
 
+// ---- Bluetooth -----------------------------------------------------------------
+
+// The radio's Bluetooth audio for one session (docs/bluetooth-audio.md). It never starts
+// in builds without Bluetooth
+class BluetoothSession {
+public:
+    // false (after saying why) if it can't connect
+    bool start(const Settings& settings) {
+#ifdef RTC_BLUETOOTH
+        ansi::clearScreen();
+        ansi::print(dimColor, "Connecting to %s over Bluetooth...\n",
+                    settings.bluetoothName.empty() ? settings.bluetooth.c_str() : settings.bluetoothName.c_str());
+        ansi::flush();
+        auto say = [](const string& line) {
+            ansi::print(dimColor, "%s\n", line.c_str());
+            ansi::flush();
+        };
+        if (bridge.start(settings.bluetooth, settings.btPlayAudio, settings.btRecordAudio, say)) return true;
+        showMessage("Bluetooth audio didn't start", bridge.error() +
+                    "\n\nCheck the radio is on, paired and in range, and that nothing else (e.g. "
+                    "HTCommander or a phone app) is connected to it.");
+        return false;
+#else
+        (void)settings;
+        showMessage("No Bluetooth", "This build has no Bluetooth audio. Turn it off in Settings.");
+        return false;
+#endif
+    }
+
+    // Sound card names for the modems, or "" for the saved ones
+    string capture() const {
+#ifdef RTC_BLUETOOTH
+        return bridge.modemCaptureDevice();
+#else
+        return "";
+#endif
+    }
+    string playback() const {
+#ifdef RTC_BLUETOOTH
+        return bridge.modemPlaybackDevice();
+#else
+        return "";
+#endif
+    }
+
+private:
+#ifdef RTC_BLUETOOTH
+    bt::BluetoothAudio bridge;
+#endif
+};
+
+string bluetoothDescription(const Settings& s) {
+    if (s.bluetooth.empty()) return "Off (sound cards)";
+    return s.bluetoothName.empty() ? s.bluetooth : s.bluetoothName + "  [" + s.bluetooth + "]";
+}
+
+// Pick a paired radio, or turn Bluetooth audio off. false on Esc
+bool pickBluetooth(Settings& settings) {
+#ifdef RTC_BLUETOOTH
+    ansi::clearScreen();
+    ansi::print(dimColor, "Looking for paired Bluetooth devices...\n");
+    ansi::flush();
+    vector<bt::Device> devices = bt::pairedDevices();
+    vector<string> options = {"Off (use sound cards)"};
+    int current = 0;
+    for (const bt::Device& device : devices) {
+        if (device.address == settings.bluetooth) current = static_cast<int>(options.size());
+        options.push_back(device.name + "  [" + device.address + "]");
+    }
+    options.push_back("Type an address...");
+    int choice = ansi::select("Bluetooth radio", options, current,
+                              "UV-Pro, UV-50Pro, GA-5WB, VR-N75/N76/N7500/N7600. Pair it first; radios list first");
+    if (choice < 0) return false;
+    if (choice == 0) {
+        settings.bluetooth.clear();
+        settings.bluetoothName.clear();
+        return true;
+    }
+    if (choice == static_cast<int>(options.size()) - 1) {
+        string address = settings.bluetooth;
+        for (;;) {
+            if (!ansi::inputLine("Radio's Bluetooth address", "e.g. 38:D2:00:01:C0:AB", address)) return false;
+            string normalized = bt::normalizeAddress(address);
+            if (!normalized.empty()) {
+                settings.bluetooth = normalized;
+                settings.bluetoothName.clear();
+                break;
+            }
+            showMessage("Not an address", "Six pairs of hex digits, e.g. 38:D2:00:01:C0:AB");
+        }
+    } else {
+        const bt::Device& device = devices[static_cast<size_t>(choice - 1)];
+        settings.bluetooth = device.address;
+        settings.bluetoothName = device.name;
+    }
+    // Sound keys the radio, so there's nothing else to key it with
+    settings.ptt = PttType::Vox;
+    return true;
+#else
+    (void)settings;
+    return false;
+#endif
+}
+
+// Windows: the virtual cable end the bridge plays the radio into, or records the modems from
+void pickBluetoothCable(Settings& settings, bool play) {
+    auto direction = play ? os::AudioDirection::Playback : os::AudioDirection::Capture;
+    vector<os::AudioDevice> devices = findAudioDevices(direction);
+    if (devices.empty()) {
+        showMessage("No sound cards", "Install a virtual cable such as VB-Cable first.");
+        return;
+    }
+    string& name = play ? settings.btPlayAudio : settings.btRecordAudio;
+    int current = 0;
+    for (int i = 0; i < static_cast<int>(devices.size()); i++)
+        if (devices[i].name == name) current = i;
+    int choice = ansi::selectWith(
+        play ? "Cable the radio's audio goes into" : "Cable the transmit audio comes from",
+        static_cast<int>(devices.size()), [&](int i) {
+            string label = devices[i].desc + "  [" + devices[i].name + "]";
+            if (devices[i].name == name) label += "   <- current";
+            return label;
+        }, current,
+        play ? "e.g. CABLE Input. Set Rx sound card to its other end (CABLE Output)"
+             : "e.g. CABLE-B Output. Set Tx sound card to its other end (CABLE-B Input)");
+    if (choice >= 0) name = devices[choice].name;
+}
+
 // ---- Radio ---------------------------------------------------------------------
 
 string radioDescription(int model) {
@@ -177,6 +309,7 @@ string radioControlDescription(const Settings& settings) {
 }
 
 string pttDescription(const Settings& settings) {
+    if (!settings.bluetooth.empty()) return "the radio keys itself on Bluetooth audio";
     switch (settings.ptt) {
         case PttType::Vox: return "VOX";
         case PttType::Cat: return "CAT command";
@@ -360,11 +493,26 @@ void startPacketSession(Settings& settings) {
         return;
     }
 
+#ifdef __APPLE__
+    if (settings.usesBluetooth()) {
+        // Homebrew's direwolf uses the Mac's default sound card, which the bridge can't be
+        showMessage("Bluetooth packet needs Linux or Windows",
+                    "On macOS direwolf always uses the system's default sound card, so it can't "
+                    "reach the Bluetooth radio. minimodem modes work.");
+        return;
+    }
+#endif
+    BluetoothSession bluetooth;
+    if (settings.usesBluetooth() && !bluetooth.start(settings)) return;
+
     // direwolf always needs the capture card: it listens for a clear channel before sending
-    auto rxName = resolveAudioName(settings, false);
+    std::optional<string> rxName = bluetooth.capture();
+    if (rxName->empty()) rxName = resolveAudioName(settings, false);
     if (!rxName) return;
     string txName = settings.txAudio;
-    if (settings.transmits()) {
+    if (!bluetooth.playback().empty()) {
+        txName = bluetooth.playback();
+    } else if (settings.transmits()) {
         auto name = resolveAudioName(settings, true);
         if (!name) return;
         txName = *name;
@@ -400,17 +548,22 @@ void startSession(Settings& settings) {
         return;
     }
 
+    BluetoothSession bluetooth;
+    if (settings.usesBluetooth() && !bluetooth.start(settings)) return;
+
     vector<string> rxAudio, txAudio;
     if (useFile) {
         (settings.transmits() ? txAudio : rxAudio) = {"-f", file};
     } else {
         if (settings.receives()) {
-            auto args = resolveAudio(settings, false);
+            auto args = bluetooth.capture().empty() ? resolveAudio(settings, false)
+                                                    : audioArgsFor(bluetooth.capture(), false);
             if (!args) return;
             rxAudio = *args;
         }
         if (settings.transmits()) {
-            auto args = resolveAudio(settings, true);
+            auto args = bluetooth.playback().empty() ? resolveAudio(settings, true)
+                                                     : audioArgsFor(bluetooth.playback(), true);
             if (!args) return;
             txAudio = *args;
         }
@@ -696,18 +849,31 @@ void settingsMenu(Settings& settings) {
             items.push_back({"Squelch", squelchLevels[nearestOption(squelchLevels, s.squelch)].label,
                              [&] { pickOption("Squelch", squelchLevels, s.squelch); }});
         }
+        if (bluetoothBuiltIn() || !s.bluetooth.empty())
+            items.push_back({"Bluetooth radio", bluetoothDescription(s), [&] { pickBluetooth(s); }});
+        // Bluetooth on Linux and macOS brings its own sound card. On Windows the modems use
+        // virtual cables, and the bridge the cables' other ends
+        bool bluetoothCard = !s.bluetooth.empty() && !bluetoothUsesSavedAudio();
+        if (!s.bluetooth.empty() && bluetoothUsesSavedAudio()) {
+            items.push_back({"Radio audio into", s.btPlayAudio.empty() ? "(not set)" : s.btPlayAudio,
+                             [&] { pickBluetoothCable(s, true); }});
+            items.push_back({"Transmit audio from", s.btRecordAudio.empty() ? "(not set)" : s.btRecordAudio,
+                             [&] { pickBluetoothCable(s, false); }});
+        }
         // direwolf always listens, even when only transmitting
-        if (s.receives() || s.packet()) {
+        if ((s.receives() || s.packet()) && !bluetoothCard) {
             items.push_back({"Rx sound card", audioValue(s.rxAudio, s.rxAudioDesc), [&] {
                 auto devices = findAudioDevices(os::AudioDirection::Capture);
                 pickAudioDevice(s, os::AudioDirection::Capture, devices);
             }});
         }
-        if (s.transmits()) {
+        if (s.transmits() && !bluetoothCard) {
             items.push_back({"Tx sound card", audioValue(s.txAudio, s.txAudioDesc), [&] {
                 auto devices = findAudioDevices(os::AudioDirection::Playback);
                 pickAudioDevice(s, os::AudioDirection::Playback, devices);
             }});
+        }
+        if (s.transmits() && s.bluetooth.empty()) {
             items.push_back({"PTT", pttDescription(s), [&] { pickPtt(s); }});
             items.push_back({"Radio (CAT)", radioControlDescription(s), [&] { pickRadioControl(s); }});
         }
