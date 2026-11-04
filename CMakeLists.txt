@@ -116,7 +116,8 @@ set(RTC_PROGRAMS RadioConnectorCli RadioConnector)
 # Every test in one program: run it with no arguments (RadioTests --help for options)
 if(RTC_TESTS)
     enable_testing()
-    add_executable(RadioTests src/tests/radio_tests.cpp ${CAT_SOURCES})
+    add_executable(RadioTests src/tests/radio_tests.cpp src/tests/channel.cpp src/tests/channel.h
+            ${CAT_SOURCES})
     # The over-the-air tests run RadioConnector from the same folder
     add_dependencies(RadioTests RadioConnector)
     list(APPEND RTC_PROGRAMS RadioTests)

@@ -1,6 +1,8 @@
 // radio_tests.cpp - RadioTests: every test, with no arguments needed (run by ctest too).
 //   unit   The code on its own: settings, modems' command lines, AX.25, FX.25, the connector
 //   audio  Decodes tests/audio with minimodem and direwolf's atest (skipped without them)
+//   channel AX.25 through simulated NFM and SSB radios with noise, mistuning and fading:
+//          how far each mode gets. The audio is saved in channel-audio next to the program
 //   cat    Radio control through Hamlib's dummy rig, or a real radio with --cat-port
 //   air    RadioConnector and a stand-in station over the sound cards (e.g. VB-Cable):
 //          receiving, a missing part, and sending with acks. Skipped without sound cards
@@ -24,6 +26,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -37,6 +40,7 @@
 #include "../Connector/packet.h"
 #include "../settings.h"
 #include "../testcases.h"
+#include "channel.h"
 
 using std::string;
 
@@ -466,6 +470,51 @@ void testAx25Audio() {
     fsk::Audio audio = fsk::ax25({packet::encodeUi("N0CALL", "CQ", "x")}, 1200, 48000);
     CHECK(audio.rate == 48000);
     CHECK(!audio.samples.empty());
+}
+
+// Tone frequency from zero crossings, over the middle half (past the filters' settling)
+double toneHz(const fsk::Audio& audio) {
+    size_t from = audio.samples.size() / 4, to = audio.samples.size() * 3 / 4;
+    int crossings = 0;
+    for (size_t i = from + 1; i < to; i++)
+        if ((audio.samples[i - 1] < 0) != (audio.samples[i] < 0)) crossings++;
+    return crossings / 2.0 / (static_cast<double>(to - from) / audio.rate);
+}
+
+// The simulated radios themselves, so the channel group's numbers mean what they say
+void testChannelModels() {
+    fsk::Audio tone = fsk::tone(1000, 1, 48000);
+    sim::Nfm micPath, dataPorts;
+    dataPorts.micPath = false;
+    CHECK(std::fabs(toneHz(sim::nfm(tone, micPath)) - 1000) < 2);
+    CHECK(std::fabs(toneHz(sim::nfm(tone, dataPorts)) - 1000) < 2);
+    sim::Ssb ssb;
+    CHECK(std::fabs(toneHz(sim::ssb(tone, ssb)) - 1000) < 2);
+    ssb.mistuneHz = 50;
+    CHECK(std::fabs(toneHz(sim::ssb(tone, ssb)) - 1050) < 2);
+    ssb.mistuneHz = -25;
+    CHECK(std::fabs(toneHz(sim::ssb(tone, ssb)) - 975) < 2);
+
+    // At 10 dB SNR, the clean signal is 10/11 of the noisy one's power
+    sim::Ssb clean, noisy;
+    noisy.snrDb = 10;
+    fsk::Audio a = sim::ssb(tone, clean), b = sim::ssb(tone, noisy);
+    double ab = 0, aa = 0, bb = 0;
+    for (size_t i = a.samples.size() / 4; i < a.samples.size() * 3 / 4; i++) {
+        ab += a.samples[i] * b.samples[i];
+        aa += a.samples[i] * a.samples[i];
+        bb += b.samples[i] * b.samples[i];
+    }
+    double signalShare = ab * ab / (aa * bb);
+    CHECK(std::fabs(signalShare - 10.0 / 11) < 0.02);
+
+    // The same seed gives the same audio
+    noisy.dopplerHz = 1;
+    noisy.delayMs = 2;
+    CHECK(sim::ssb(tone, noisy).samples == sim::ssb(tone, noisy).samples);
+    sim::Nfm weak;
+    weak.cnrDb = 8;
+    CHECK(sim::nfm(tone, weak).samples == sim::nfm(tone, weak).samples);
 }
 
 void testAccuracy() {
@@ -903,6 +952,7 @@ int runUnit() {
         {"Baudot encoding", testBaudot},
         {"Signal length", testSignalLength},
         {"Accuracy scoring", testAccuracy},
+        {"Simulated radios", testChannelModels},
         {"Packet settings", testPacketSettings},
         {"PTT settings", testPttSettings},
         {"Callsigns", testCallsigns},
@@ -1006,7 +1056,7 @@ int runAudio(const std::string& dir) {
 
 // ---- Options -------------------------------------------------------------------
 
-const std::vector<string> allGroups = {"unit", "audio", "cat", "air"};
+const std::vector<string> allGroups = {"unit", "audio", "channel", "cat", "air"};
 
 struct Options {
     std::set<string> groups{allGroups.begin(), allGroups.end()};
@@ -1486,6 +1536,200 @@ int runAir(const Options& options) {
     return failed ? 1 : 0;
 }
 
+// ---- Simulated radio channels ---------------------------------------------------------
+
+// Not pass/fail for every row: how far each mode gets before it breaks. Only the perfect
+// and strongest rows have to decode. Every row's audio is saved, to listen to
+
+struct ChannelRow {
+    string label;
+    string file;                 // In channel-audio
+    std::function<fsk::Audio(const fsk::Audio&)> radio;
+    float mustDecode = -1;       // Share of frames that must decode, 0-1. -1 = only reported
+};
+
+struct ChannelScenario {
+    string title;
+    string about;
+    int baud;
+    int frames;
+    std::vector<ChannelRow> rows;
+};
+
+using Radio = std::function<fsk::Audio(const fsk::Audio&)>;
+
+Radio nfmRadio(bool mic, float ifBandwidth, float cnr) {
+    return [=](const fsk::Audio& audio) {
+        sim::Nfm radio;
+        radio.micPath = mic;
+        radio.ifBandwidthHz = ifBandwidth;
+        radio.cnrDb = cnr;
+        return sim::nfm(audio, radio);
+    };
+}
+
+Radio ssbRadio(float snr, float mistune = 0, float doppler = 0, float delayMs = 0) {
+    return [=](const fsk::Audio& audio) {
+        sim::Ssb radio;
+        radio.snrDb = snr;
+        radio.mistuneHz = mistune;
+        radio.dopplerHz = doppler;
+        radio.delayMs = delayMs;
+        return sim::ssb(audio, radio);
+    };
+}
+
+// The perfect signal (the radios, no noise), then each noise level. what: "CNR" or "SNR"
+std::vector<ChannelRow> noiseSweep(const string& prefix, const string& what,
+                                   const std::vector<float>& levels,
+                                   const std::function<Radio(float)>& radio,
+                                   float strongMust, float perfectMust = 1.0f) {
+    std::vector<ChannelRow> rows;
+    rows.push_back({"perfect (no noise)", prefix + "_perfect.wav", radio(sim::noNoise), perfectMust});
+    for (size_t i = 0; i < levels.size(); i++) {
+        char label[32], file[48];
+        std::snprintf(label, sizeof label, "%s %g dB", what.c_str(), levels[i]);
+        std::snprintf(file, sizeof file, "%s_%s%g.wav", prefix.c_str(), what == "CNR" ? "cnr" : "snr", levels[i]);
+        rows.push_back({label, file, radio(levels[i]), i == 0 ? strongMust : -1});
+    }
+    return rows;
+}
+
+std::vector<ChannelScenario> channelScenarios() {
+    std::vector<ChannelScenario> scenarios;
+    scenarios.push_back({"AX.25 1200 on NFM, microphone in and speaker out",
+        "The usual VHF/UHF setup: 3 kHz deviation, 12.5 kHz receiver IF, pre- and de-emphasis, "
+        "300-3000 Hz audio. CNR is carrier to noise in the IF; FM's threshold is near 10 dB",
+        1200, 20,
+        noiseSweep("nfm1200", "CNR", {20, 15, 12, 10, 9, 8, 7, 6, 4},
+                   [](float cnr) { return nfmRadio(true, 12500, cnr); }, 0.95f)});
+    scenarios.push_back({"AX.25 9600 on NFM, data ports",
+        "Flat audio in and out (the radio's 9600 data jack): 3 kHz deviation, 15 kHz IF",
+        9600, 20,
+        noiseSweep("nfm9600", "CNR", {25, 20, 16, 13, 11, 10, 9, 8},
+                   [](float cnr) { return nfmRadio(false, 15000, cnr); }, 0.95f)});
+    scenarios.push_back({"AX.25 9600 on NFM, microphone and speaker",
+        "Not expected to decode: emphasis and the 300-3000 Hz audio filters ruin 9600, which "
+        "is why it needs the data ports",
+        9600, 20,
+        noiseSweep("nfm9600mic", "CNR", {20},
+                   [](float cnr) { return nfmRadio(true, 15000, cnr); }, -1, -1)});
+    scenarios.push_back({"AX.25 300 on SSB, noise",
+        "HF packet: 1600/1800 Hz tones through a 300-2700 Hz SSB transmitter and receiver. SNR "
+        "is the average signal to noise in the 2400 Hz passband",
+        300, 10,
+        noiseSweep("ssb300", "SNR", {20, 15, 10, 6, 4, 3, 2, 0, -3},
+                   [](float snr) { return ssbRadio(snr); }, 0.9f)});
+
+    ChannelScenario mistuned{"AX.25 300 on SSB, mistuned",
+        "The receiver off frequency, at 15 dB SNR: every tone moves by that much", 300, 10, {}};
+    for (float hz : {10.0f, 25.0f, 50.0f, 100.0f}) {
+        char label[32], file[48];
+        std::snprintf(label, sizeof label, "%g Hz off", hz);
+        std::snprintf(file, sizeof file, "ssb300_mistune%g.wav", hz);
+        mistuned.rows.push_back({label, file, ssbRadio(15, hz)});
+    }
+    scenarios.push_back(mistuned);
+
+    // The ITU-R F.1487 (CCIR 520) HF channels
+    ChannelScenario fading{"AX.25 300 on SSB, fading",
+        "Watterson model: two equal paths that fade on their own, the second delayed, at 15 dB "
+        "average SNR", 300, 10, {}};
+    fading.rows.push_back({"good (0.1 Hz, 0.5 ms)", "ssb300_fading_good.wav", ssbRadio(15, 0, 0.1f, 0.5f)});
+    fading.rows.push_back({"moderate (0.5 Hz, 1 ms)", "ssb300_fading_moderate.wav", ssbRadio(15, 0, 0.5f, 1)});
+    fading.rows.push_back({"poor (1 Hz, 2 ms)", "ssb300_fading_poor.wav", ssbRadio(15, 0, 1, 2)});
+    fading.rows.push_back({"flutter (10 Hz, 0.5 ms)", "ssb300_fading_flutter.wav", ssbRadio(15, 0, 10, 0.5f)});
+    scenarios.push_back(fading);
+    return scenarios;
+}
+
+// channel-audio next to the program
+string channelDir() {
+    string exeDir = os::executableDir();
+    return (std::filesystem::path(exeDir.empty() ? "." : exeDir) / "channel-audio").string();
+}
+
+int runChannel() {
+    if (!atestAvailable()) {
+        std::printf("SKIP  atest (from direwolf) not found\n");
+        appendSummary("### Simulated radio channels (" + runnerName() + ")\n\n⏭️ Skipped: atest "
+                      "(from direwolf) isn't installed on this runner.\n\n");
+        return skippedCode;
+    }
+    string dir = channelDir();
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::printf("Audio saved in %s\n", dir.c_str());
+
+    int failed = 0;
+    string summary = "### Simulated radio channels (" + runnerName() + ")\n\nAX.25 frames through "
+                     "simulated radios, decoded by direwolf's atest. Only the perfect and strongest "
+                     "rows must decode; the rest show where each mode breaks.\n";
+    string readme = "Simulated radio audio from RadioTests' channel group, rewritten on every run.\n"
+                    "Each file is AX.25 test frames through a simulated radio; play one to hear it.\n";
+    for (const ChannelScenario& scenario : channelScenarios()) {
+        Settings settings;
+        settings.engine = Engine::Direwolf;
+        settings.packetBaud = scenario.baud;
+        std::vector<string> texts;
+        std::vector<packet::Bytes> frames;
+        for (int i = 1; i <= scenario.frames; i++) {
+            char text[96];
+            std::snprintf(text, sizeof text, "Channel test %02d of %d: the quick brown fox jumps over the lazy dog",
+                          i, scenario.frames);
+            texts.push_back(text);
+            frames.push_back(packet::encodeUi(testCallsign, packet::groupAddress, text));
+        }
+        fsk::Audio clean = fsk::ax25(frames, scenario.baud, 48000);
+
+        std::printf("%s\n", scenario.title.c_str());
+        summary += "\n#### " + scenario.title + "\n\n" + scenario.about + "\n\n"
+                   "| Result | Signal | Frames decoded | File |\n|---|---|---|---|\n";
+        readme += "\n" + scenario.title + "\n  " + scenario.about + "\n";
+        for (const ChannelRow& row : scenario.rows) {
+            string path = (std::filesystem::path(dir) / row.file).string();
+            string error;
+            int got = 0;
+            if (!fsk::writeWav(path, row.radio(clean))) {
+                error = "couldn't write " + path;
+            } else {
+                std::set<string> decoded;
+                std::istringstream lines(decodePacketsFile(settings, path, error));
+                string line;
+                while (std::getline(lines, line)) {
+                    size_t colon = line.find(": ");
+                    if (colon != string::npos) decoded.insert(line.substr(colon + 2));
+                }
+                for (const string& text : texts) got += static_cast<int>(decoded.count(text));
+            }
+            float share = static_cast<float>(got) / static_cast<float>(scenario.frames);
+            bool checked = row.mustDecode >= 0;
+            bool ok = error.empty() && (!checked || share >= row.mustDecode);
+            if (!ok) failed++;
+            const char* result = !ok ? "FAIL" : checked ? "PASS" : "    ";
+            std::printf("  %s  %-24s %2d/%-2d %4s  %s\n", result, row.label.c_str(), got, scenario.frames,
+                        percent(share).c_str(), row.file.c_str());
+            if (!error.empty()) std::printf("        %s\n", error.c_str());
+            string fraction = std::to_string(got) + "/" + std::to_string(scenario.frames) + " (" +
+                              percent(share) + ")";
+            summary += string("| ") + (!ok ? "❌ FAIL" : checked ? "✅ PASS" : "📊") + " | " +
+                       cell(row.label) + " | " + fraction +
+                       (checked ? ", needs " + percent(row.mustDecode) : "") + " | `" + row.file + "` |\n";
+            readme += "  " + row.file + "  " + row.label + ": " + fraction + " decoded\n";
+            if (!ok) {
+                string why = error.empty() ? fraction + " decoded, needs " + percent(row.mustDecode) : error;
+                annotate("error", "src/tests/channel.cpp", 0, "Channel: " + scenario.title + ", " + row.label, why);
+            }
+        }
+    }
+    if (std::FILE* f = std::fopen((std::filesystem::path(dir) / "README.txt").string().c_str(), "w")) {
+        std::fputs(readme.c_str(), f);
+        std::fclose(f);
+    }
+    appendSummary(summary + "\n");
+    return failed == 0 ? 0 : 1;
+}
+
 // ---- Command line --------------------------------------------------------------------
 
 void usage(const char* program) {
@@ -1494,7 +1738,7 @@ void usage(const char* program) {
         "With no options it runs every test group. A group that can't run here (no decoder,\n"
         "no sound cards) is skipped, not failed.\n"
         "\n"
-        "Groups: unit, audio, cat, air\n"
+        "Groups: unit, audio, channel, cat, air\n"
         "  --only GROUPS        run just these, e.g. --only unit,cat\n"
         "  --skip GROUPS        run all but these, e.g. --skip air\n"
         "\n"
@@ -1502,6 +1746,8 @@ void usage(const char* program) {
         "  --audio-dir DIR      test audio to decode (default: test-audio next to the program,\n"
         "                       else the source's tests/audio)\n"
         "  --generate DIR       write the test audio files to DIR, then exit\n"
+        "channel (AX.25 through simulated NFM and SSB radios; needs atest)\n"
+        "  Every row's audio is saved in channel-audio next to the program\n"
         "cat\n"
         "  --cat-port PORT      test a real radio on PORT (e.g. COM5) instead of Hamlib's\n"
         "                       dummy rig. It is keyed for half a second\n"
@@ -1610,6 +1856,7 @@ int main(int argc, char** argv) {
             std::printf("From %s\n", dir.c_str());
             return runAudio(dir);
         }},
+        {"channel", "Simulated radio channels", [] { return runChannel(); }},
         {"cat", "CAT radio control", [&] { return runCat(options); }},
         {"air", "Over the air", [&] { return runAir(options); }},
     };
