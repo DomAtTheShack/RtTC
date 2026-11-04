@@ -27,6 +27,9 @@
 #include "../Radio/modem.h"
 #include "packet.h"
 #include "../settings.h"
+#ifdef RTC_BLUETOOTH
+#include "../Bluetooth/bt_audio.h"
+#endif
 
 namespace fs = std::filesystem;
 using connector::Json;
@@ -250,6 +253,28 @@ public:
             setState(State::Unconfigured, "missing " + missing);
             return;
         }
+        // Bluetooth audio first: direwolf then uses its sound card
+        std::string rxDevice = settings.rxAudio, txDevice = settings.txAudio;
+        if (settings.usesBluetooth()) {
+#if defined(RTC_BLUETOOTH) && !defined(__APPLE__)
+            logLine("connecting to the radio over Bluetooth (%s)", settings.bluetooth.c_str());
+            bluetooth = std::make_unique<bt::BluetoothAudio>();
+            if (!bluetooth->start(settings.bluetooth, settings.btPlayAudio, settings.btRecordAudio)) {
+                std::string problem = "Bluetooth: " + bluetooth->error();
+                bluetooth.reset();
+                return fail(problem);
+            }
+            if (!bluetooth->modemCaptureDevice().empty()) rxDevice = bluetooth->modemCaptureDevice();
+            if (!bluetooth->modemPlaybackDevice().empty()) txDevice = bluetooth->modemPlaybackDevice();
+            logLine("Bluetooth audio connected");
+#elif defined(__APPLE__)
+            // Homebrew's direwolf uses the Mac's default sound card, which the bridge can't be
+            return fail("Bluetooth audio needs Linux or Windows: direwolf on macOS only uses the "
+                        "default sound card");
+#else
+            return fail("this build has no Bluetooth audio (bluetooth= is set)");
+#endif
+        }
         int port = os::freeTcpPort();
         if (port == 0) return fail("no free TCP port for direwolf's KISS port");
         kissPort = port;
@@ -258,8 +283,7 @@ public:
         configPath = fs::temp_directory_path() / configName;
         {
             std::ofstream out(configPath, std::ios::trunc);
-            out << direwolfConfig(settings, direwolfDevice(settings.rxAudio),
-                                  direwolfDevice(settings.txAudio), kissPort);
+            out << direwolfConfig(settings, direwolfDevice(rxDevice), direwolfDevice(txDevice), kissPort);
             if (!out) return fail("couldn't write " + configPath.string());
         }
         process = std::make_unique<os::Process>();
@@ -305,6 +329,10 @@ public:
             process.reset();
         }
         direwolfRunning = false;
+#ifdef RTC_BLUETOOTH
+        // After direwolf, so its last audio goes out; stopping unkeys the radio
+        bluetooth.reset();
+#endif
         if (!configPath.empty()) {
             std::error_code ec;
             fs::remove(configPath, ec);
@@ -323,6 +351,12 @@ public:
     }
 
     void tick(TimePoint now) {
+#ifdef RTC_BLUETOOTH
+        if (bluetooth && !bluetooth->connected() && state != State::Error) {
+            stop();
+            return fail("lost the Bluetooth connection to the radio");
+        }
+#endif
         if ((state == State::Starting || state == State::Restarting) && now >= nextConnectTry) {
             nextConnectTry = now + 250ms;
             if (kiss.connect("127.0.0.1", kissPort)) {
@@ -452,6 +486,9 @@ private:
     std::string log;
     std::string partialLine;   // direwolf output after the last newline, for --direwolf
     bool transmitted = false;
+#ifdef RTC_BLUETOOTH
+    std::unique_ptr<bt::BluetoothAudio> bluetooth;
+#endif
 };
 
 // ---- The program --------------------------------------------------------------------

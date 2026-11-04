@@ -10,6 +10,10 @@ PTT is VOX, a CAT command (Hamlib), or the RTS/DTR line of a serial port, which 
 second port (e.g. the FTDX3000's Standard port). Common Icom, Yaesu, Kenwood, Elecraft and
 Xiegu radios are listed; any other Hamlib model works by number, or through `rigctld`.
 
+Radios with Bluetooth audio (BTech UV-Pro and UV-50Pro, Radioddity GA-5WB, Vero
+VR-N75/N76/N7500/N7600) can skip the sound card and cable: set **Bluetooth radio** in
+Settings ([docs/bluetooth-audio.md](docs/bluetooth-audio.md)).
+
 ### The programs
 
 | Program | What it is |
@@ -96,6 +100,8 @@ Logs go to stderr.
   that does it.
 - [docs/rc1-test-messages.md](docs/rc1-test-messages.md): `RC1` lines to type in
   RadioConnectorCli to test a RadioConnector's acks by hand.
+- [docs/bluetooth-audio.md](docs/bluetooth-audio.md): audio over Bluetooth to UV-Pro-style
+  radios, how to set it up, and how the radio's protocol works.
 
 ### Installing the modems
 
@@ -126,7 +132,8 @@ cmake --build build
 - Linux and macOS: Hamlib installed (`make install`, or Homebrew). `src/APT-PACKAGES.txt`
   lists the Ubuntu packages.
 - Options: `-DRTC_TESTS=OFF` skips RadioTests, `-DRTC_DIREWOLF=OFF` (Windows) skips
-  building direwolf.
+  building direwolf, `-DRTC_BLUETOOTH=OFF` leaves out Bluetooth audio (on Linux it needs
+  `libbluetooth-dev` and `libpulse-dev`, and is left out with a warning without them).
 - `-DRTC_STATIC=ON` (Linux and macOS; what the releases use) links Hamlib, libusb and the
   C++ runtime into the programs. It needs a static Hamlib that pkg-config finds:
   `./configure --disable-shared --enable-static --without-cxx-binding`, then
@@ -140,6 +147,8 @@ Source layout:
 | `src/` | RadioConnectorCli (`main.cpp`, `session.cpp`), settings, the OS layer (`backend.cpp`), test cases |
 | `src/Radio/` | The modems (minimodem and direwolf command lines and configs, Baudot audio) and CAT radio control |
 | `src/Connector/` | RadioConnector (`radio_connector.cpp`), its ack engine (`connector.cpp`), config, and AX.25/KISS (`packet.cpp`) |
+| `src/Bluetooth/` | Bluetooth audio: the radio's protocol (`bt_protocol.cpp`), connections (`rfcomm_*`), the virtual sound card (`virtual_audio_*`) and the bridge (`bt_audio.cpp`) |
+| `src/third_party/` | nlohmann/json and Google's libsbc, copied in |
 | `src/tests/` | RadioTests (`radio_tests.cpp`) and the test audio |
 | `docs/` | The protocol and testing docs |
 

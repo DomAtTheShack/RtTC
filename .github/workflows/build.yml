@@ -1,10 +1,13 @@
 name: Build
 
-# Every push and PR builds all three platforms. Every push to master, every night (when
-# there are new commits) and "Run workflow" also publish the builds as the "nightly"
-# GitHub release, replacing the last one. Nothing is published unless all three pass.
+# Pushes to master and PRs build all three platforms. Other branches build through their
+# PR, so a push to a PR's branch runs once, not twice; a branch without a PR builds with
+# "Run workflow". Every push to master, every night (when there are new commits) and "Run
+# workflow" also publish the builds as the "nightly" GitHub release, replacing the last
+# one. Nothing is published unless all three pass.
 on:
   push:
+    branches: [master]
   pull_request:
   schedule:
     - cron: "0 7 * * *"          # 07:00 UTC = 3 am Eastern (2 am in winter)
@@ -120,6 +123,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential ninja-build pkg-config libasound2-dev libusb-1.0-0-dev libudev-dev
+          # Bluetooth audio: BlueZ's SDP library and PulseAudio's simple API
+          sudo apt-get install -y libbluetooth-dev libpulse-dev
           # Only for the audio tests, which decode tests/audio with them
           sudo apt-get install -y minimodem direwolf
           # CMakeLists.txt asks for CMake 4.1 or newer, newer than Ubuntu's
@@ -182,7 +187,9 @@ jobs:
 
   macos:
     name: macOS (Apple Silicon)
-    runs-on: macos-latest        # Apple Silicon
+    # Pinned (Apple Silicon), not macos-latest: the build doesn't change when GitHub moves
+    # the alias, and if this image's runners are backed up, try another version (macos-14)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 
@@ -280,7 +287,8 @@ jobs:
           has to be installed separately (Cygwin build).
 
           **Linux:** \`tar xzf\`, then \`./RadioConnectorCli\`. Hamlib and libusb are built in.
-          Needs ALSA, and minimodem and/or direwolf (see APT-PACKAGES.txt).
+          Needs ALSA, and minimodem and/or direwolf (see APT-PACKAGES.txt). Bluetooth
+          audio also needs libbluetooth3 and PulseAudio or PipeWire.
 
           **macOS (Apple Silicon):** Hamlib and libusb are built in.
           \`brew install minimodem direwolf && brew services start pulseaudio\`,

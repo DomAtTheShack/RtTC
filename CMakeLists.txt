@@ -19,6 +19,9 @@ endif()
 # (MinGW) builds always link the runtime statically and use the bundled Hamlib DLLs
 option(RTC_STATIC "Link libraries statically where possible" OFF)
 option(RTC_TESTS "Build RadioTests and register it with ctest" ON)
+# Bluetooth audio for UV-Pro-style radios (docs/bluetooth-audio.md). Linux needs BlueZ's
+# libbluetooth and libpulse-simple (libbluetooth-dev libpulse-dev on Debian/Ubuntu)
+option(RTC_BLUETOOTH "Bluetooth audio for UV-Pro, GA-5WB and Vero radios" ON)
 
 # ---- Shared code ----------------------------------------------------------------------
 
@@ -31,9 +34,16 @@ add_library(rtc_core STATIC
         "src/Radio/fsk.cpp" "src/Radio/fsk.h"
         src/Connector/packet.cpp src/Connector/packet.h
         src/Connector/connector.cpp src/Connector/connector.h
-        src/Connector/connector_config.cpp src/Connector/connector_config.h)
+        src/Connector/connector_config.cpp src/Connector/connector_config.h
+        src/Bluetooth/bt_protocol.cpp src/Bluetooth/bt_protocol.h)
 # third_party: nlohmann/json, copied in so builds don't need internet access
 target_include_directories(rtc_core PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/third_party)
+
+# Google's libsbc (Apache 2.0), copied in: the SBC codec for Bluetooth audio
+add_library(rtc_sbc STATIC src/third_party/libsbc/sbc.c src/third_party/libsbc/bits.c)
+set_target_properties(rtc_sbc PROPERTIES C_STANDARD 11)
+target_include_directories(rtc_sbc PUBLIC ${CMAKE_SOURCE_DIR}/src/third_party/libsbc)
+target_link_libraries(rtc_core PUBLIC rtc_sbc)
 # Lets the Test tools menu and RadioTests find tests/audio when run from the build folder
 target_compile_definitions(rtc_core PRIVATE RTC_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src")
 
@@ -53,6 +63,37 @@ elseif(APPLE)
 else()
     find_package(ALSA REQUIRED)
     target_link_libraries(rtc_core PUBLIC ALSA::ALSA)
+endif()
+
+# Bluetooth audio: the connection (rfcomm_*) and the virtual sound card (virtual_audio_*)
+# differ by OS. RTC_BLUETOOTH is defined when it's built in
+if(RTC_BLUETOOTH AND NOT WIN32 AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(BLUEZ IMPORTED_TARGET bluez)
+    pkg_check_modules(PULSE_SIMPLE IMPORTED_TARGET libpulse-simple libpulse)
+    if(NOT BLUEZ_FOUND OR NOT PULSE_SIMPLE_FOUND)
+        message(WARNING "Bluetooth audio left out: it needs libbluetooth and libpulse-simple "
+                "(libbluetooth-dev libpulse-dev). -DRTC_BLUETOOTH=OFF hides this warning")
+        set(RTC_BLUETOOTH OFF)
+    endif()
+endif()
+if(RTC_BLUETOOTH)
+    target_sources(rtc_core PRIVATE src/Bluetooth/bt_audio.cpp src/Bluetooth/bt_audio.h
+            src/Bluetooth/rfcomm.h src/Bluetooth/virtual_audio.h)
+    target_compile_definitions(rtc_core PUBLIC RTC_BLUETOOTH)
+    if(WIN32)
+        target_sources(rtc_core PRIVATE src/Bluetooth/rfcomm_windows.cpp src/Bluetooth/virtual_audio_windows.cpp)
+    elseif(APPLE)
+        enable_language(OBJCXX)
+        pkg_check_modules(PULSE_SIMPLE REQUIRED IMPORTED_TARGET libpulse-simple)
+        target_sources(rtc_core PRIVATE src/Bluetooth/rfcomm_macos.mm src/Bluetooth/virtual_audio_pulse.cpp)
+        set_source_files_properties(src/Bluetooth/rfcomm_macos.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+        target_link_libraries(rtc_core PUBLIC PkgConfig::PULSE_SIMPLE
+                "-framework IOBluetooth" "-framework Foundation")
+    else()
+        target_sources(rtc_core PRIVATE src/Bluetooth/rfcomm_linux.cpp src/Bluetooth/virtual_audio_pulse.cpp)
+        target_link_libraries(rtc_core PUBLIC PkgConfig::BLUEZ PkgConfig::PULSE_SIMPLE)
+    endif()
 endif()
 
 # Hamlib:

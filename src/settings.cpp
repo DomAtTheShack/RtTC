@@ -101,7 +101,25 @@ bool parsePttKey(const std::string& text, PttType& ptt) {
     return false;
 }
 
+bool bluetoothBuiltIn() {
+#ifdef RTC_BLUETOOTH
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool bluetoothUsesSavedAudio() {
+#ifdef _WIN32
+    return true;
+#else
+    return false;
+#endif
+}
+
 std::string pttProblem(const Settings& s) {
+    // The radio transmits while it gets audio over Bluetooth, and nothing else keys it
+    if (!s.bluetooth.empty() && s.ptt != PttType::Vox) return "Bluetooth audio keys the radio itself: use VOX";
     switch (s.ptt) {
         case PttType::Vox:
             return "";
@@ -143,6 +161,10 @@ std::string formatSettings(const Settings& s) {
     out << "ptt_port=" << s.pttPort << "\n";
     out << "audio_file=" << s.audioFile << "\n";
     out << "quiet=" << (s.quiet ? "1" : "0") << "\n";
+    out << "bluetooth=" << s.bluetooth << "\n";
+    out << "bluetooth_name=" << s.bluetoothName << "\n";
+    out << "bt_play_audio=" << s.btPlayAudio << "\n";
+    out << "bt_record_audio=" << s.btRecordAudio << "\n";
     std::string path;
     for (const std::string& hop : s.path) path += (path.empty() ? "" : ",") + hop;
     out << "path=" << path << "\n";
@@ -208,6 +230,10 @@ Settings parseSettings(const std::string& text) {
         else if (key == "ptt_port")     s.pttPort = value;
         else if (key == "audio_file")   s.audioFile = value;
         else if (key == "quiet")        s.quiet = value == "1" || value == "true";
+        else if (key == "bluetooth")    s.bluetooth = value;
+        else if (key == "bluetooth_name") s.bluetoothName = value;
+        else if (key == "bt_play_audio")  s.btPlayAudio = value;
+        else if (key == "bt_record_audio") s.btRecordAudio = value;
         else if (key == "path") {
             s.path.clear();
             std::istringstream hops(value);

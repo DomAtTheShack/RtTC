@@ -40,6 +40,14 @@ struct Settings {
     PttType ptt = PttType::Vox;
     std::string pttPort;       // RTS/DTR: the serial port. Empty = the CAT port
     std::string audioFile;     // Empty = sound card
+    // Bluetooth audio (docs/bluetooth-audio.md): the radio's address, empty = off. The modems
+    // then use a virtual sound card instead of rxAudio/txAudio, except on Windows, where
+    // rxAudio/txAudio are the ends of virtual cables and the bridge uses the other ends,
+    // btPlayAudio (it plays the radio into) and btRecordAudio (it records the modems from)
+    std::string bluetooth;
+    std::string bluetoothName;
+    std::string btPlayAudio;
+    std::string btRecordAudio;
     bool quiet = false;        // minimodem -q
 
     // Radio Connector only; RadioConnectorCli keeps them but doesn't use them
@@ -61,9 +69,15 @@ struct Settings {
     bool receives()  const { return operation != Operation::Transmit; }
     bool hasCat()    const { return !catPort.empty(); }
     bool keysRadio() const { return ptt != PttType::Vox; }
+    bool usesBluetooth() const { return !bluetooth.empty() && audioFile.empty(); }
     // The serial port RTS/DTR keying uses
     const std::string& keyingPort() const { return pttPort.empty() ? catPort : pttPort; }
 };
+
+// Whether this build has Bluetooth audio, and whether the modems then use the saved sound
+// cards (Windows: they're virtual cables) or a virtual sound card the bridge makes
+bool bluetoothBuiltIn();
+bool bluetoothUsesSavedAudio();
 
 // "" if the PTT and CAT settings work together, else what's wrong
 std::string pttProblem(const Settings& settings);

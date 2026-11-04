@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "../backend.h"
+#include "../Bluetooth/bt_protocol.h"
 #include "../Connector/connector.h"
 #include "../Connector/connector_config.h"
 #include "../Radio/cat.h"
@@ -938,6 +939,211 @@ void testConnectorConfig() {
     CHECK(parseSettings("retry_tries=0\n").retryTries == 4);   // Out of range keeps the default
 }
 
+// ---- Bluetooth audio (protocol only; no radio needed) -------------------------------
+
+void testBtAddresses() {
+    uint8_t uuid[16];
+    CHECK(bt::parseUuid(bt::audioUuid, uuid) && uuid[0] == 0x39 && uuid[15] == 0xe6);
+    CHECK(!bt::parseUuid("39144315-32fa-40db-85ed", uuid));
+    CHECK(bt::normalizeAddress("38:d2:00:01:c0:ab") == "38:D2:00:01:C0:AB");
+    CHECK(bt::normalizeAddress("38-D2-00-01-C0-AB") == "38:D2:00:01:C0:AB");
+    CHECK(bt::normalizeAddress("38:D2:00:01:C0").empty());
+    CHECK(bt::normalizeAddress("38:D2:00:01:C0:AG").empty());
+}
+
+void testBtAudioFraming() {
+    // 0x7d and 0x7e inside a frame are escaped
+    const uint8_t payload[] = {0x01, 0x7e, 0x02, 0x7d, 0x03};
+    bt::Bytes frame = bt::audioFrame(bt::audioData, payload, sizeof payload);
+    CHECK(frame == bt::Bytes({0x7e, 0x00, 0x01, 0x7d, 0x5e, 0x02, 0x7d, 0x5d, 0x03, 0x7e}));
+    // UVProTermBT's stop frame
+    CHECK(bt::endAudioFrame() == bt::Bytes({0x7e, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7e}));
+
+    // Junk before the first flag, empty frames, and a byte at a time
+    bt::Bytes stream = {0x55, 0x66};
+    stream.insert(stream.end(), frame.begin(), frame.end());
+    stream.insert(stream.end(), {0x7e, 0x7e});
+    stream.insert(stream.end(), bt::endAudioFrame().begin(), bt::endAudioFrame().end());
+    bt::AudioDeframer deframer;
+    std::vector<bt::AudioFrame> frames;
+    for (uint8_t b : stream)
+        for (bt::AudioFrame& f : deframer.feed(&b, 1)) frames.push_back(f);
+    CHECK(frames.size() == 2);
+    CHECK(frames.size() == 2 && frames[0].command == bt::audioData &&
+          frames[0].payload == bt::Bytes(payload, payload + sizeof payload));
+    CHECK(frames.size() == 2 && frames[1].command == bt::audioEnd);
+}
+
+void testBtGaia() {
+    // The handshake: device info, then notifications for HT status, frequency mode and radio status
+    std::vector<bt::Bytes> hello = bt::gaiaHandshake();
+    CHECK(hello.size() == 4);
+    CHECK(hello[0] == bt::Bytes({0xff, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x04, 0x03}));
+    CHECK(hello[1] == bt::Bytes({0xff, 0x01, 0x00, 0x02, 0x00, 0x02, 0x00, 0x06, 0x01, 0x0e}));
+    CHECK(hello[3] == bt::Bytes({0xff, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x14}));
+
+    // Replies have 0x8000 in the command. Junk (e.g. KISS) in between is skipped
+    bt::Bytes stream = {0xc0, 0x00, 0xc0, 0xff};
+    bt::Bytes reply = {0xff, 0x01, 0x00, 0x02, 0x00, 0x02, 0x80, 0x09, 0x01, 0xc0};   // HT status, transmitting
+    bt::Bytes idle = {0xff, 0x01, 0x00, 0x02, 0x00, 0x02, 0x00, 0x09, 0x01, 0x80};
+    stream.insert(stream.end(), reply.begin(), reply.end());
+    stream.insert(stream.end(), idle.begin(), idle.end());
+    bt::GaiaDeframer deframer;
+    std::vector<bt::GaiaFrame> frames;
+    for (size_t i = 0; i < stream.size(); i += 3)
+        for (bt::GaiaFrame& f : deframer.feed(stream.data() + i, std::min<size_t>(3, stream.size() - i)))
+            frames.push_back(f);
+    CHECK(frames.size() == 2);
+    CHECK(frames.size() == 2 && frames[0].reply && frames[0].command == bt::gaiaEventNotification);
+    CHECK(frames.size() == 2 && bt::transmitting(frames[0]) == 1 && bt::transmitting(frames[1]) == 0);
+    CHECK(bt::transmitting({bt::gaiaBasic, bt::gaiaGetDevInfo, true, {1, 0x40}}) == -1);
+}
+
+std::vector<int16_t> btTone(double hz, double seconds, double amplitude = 12000) {
+    std::vector<int16_t> pcm(static_cast<size_t>(seconds * bt::audioRate));
+    for (size_t i = 0; i < pcm.size(); i++)
+        pcm[i] = static_cast<int16_t>(amplitude * std::sin(2 * 3.14159265358979323846 * hz * static_cast<double>(i) / bt::audioRate));
+    return pcm;
+}
+
+void testBtSbc() {
+    // The radio's format: 32 kHz mono, 16 blocks, 8 subbands, loudness. 88-byte frames
+    bt::SbcEncoder encoder;
+    CHECK(encoder.frameSize() == 88);
+    std::vector<int16_t> tone = btTone(1200, 1.0);
+    bt::Bytes sbc = encoder.encode(tone.data(), tone.size());
+    CHECK(sbc.size() == 250 * 88);
+    CHECK(sbc.size() > 3 && sbc[0] == 0x9c && sbc[1] == 0x71 && sbc[2] == bt::txBitpool);
+
+    // Decoding in odd pieces gives back the tone (after the filter delay)
+    bt::SbcDecoder decoder;
+    std::vector<int16_t> out;
+    for (size_t i = 0; i < sbc.size(); i += 37) {
+        std::vector<int16_t> pcm = decoder.decode(sbc.data() + i, std::min<size_t>(37, sbc.size() - i));
+        out.insert(out.end(), pcm.begin(), pcm.end());
+    }
+    CHECK(out.size() == tone.size() && decoder.badFrames() == 0);
+    double best = 0;
+    for (size_t lag = 0; lag < 200 && out.size() == tone.size(); lag++) {
+        double signal = 0, error = 0;
+        for (size_t i = 1000; i < 30000; i++) {
+            double a = tone[i], b = out[i + lag];
+            signal += a * a;
+            error += (a - b) * (a - b);
+        }
+        best = std::max(best, 10 * std::log10(signal / std::max(error, 1.0)));
+    }
+    CHECK(best > 40);   // dB; about 60 in practice
+
+    // Junk between frames is skipped
+    bt::Bytes junk = {0x12, 0x34};
+    junk.insert(junk.end(), sbc.begin(), sbc.begin() + 88);
+    bt::SbcDecoder fresh;
+    CHECK(fresh.decode(junk.data(), junk.size()).size() == 128);
+}
+
+// Audio bytes the radio would get, as SBC seconds and end frames
+struct BtSent {
+    double seconds = 0;
+    int ends = 0;
+    size_t biggestFrame = 0;
+};
+
+BtSent btDecodeSent(const bt::Bytes& bytes) {
+    BtSent sent;
+    bt::AudioDeframer deframer;
+    for (const bt::AudioFrame& f : deframer.feed(bytes.data(), bytes.size())) {
+        if (f.command == bt::audioData) {
+            sent.seconds += static_cast<double>(f.payload.size()) / 88 * 128 / bt::audioRate;
+            sent.biggestFrame = std::max(sent.biggestFrame, f.payload.size());
+        } else if (f.command == bt::audioEnd) {
+            sent.ends++;
+        }
+    }
+    return sent;
+}
+
+void testBtTransmitter() {
+    bt::Transmitter tx;   // Keys over 64, unkeys after 300 ms quiet, 250 ms lead
+    std::vector<int16_t> quiet(640, 0), noise(640, 40);
+    bt::Bytes sent;
+    for (int i = 0; i < 50; i++) {
+        bt::Bytes b = tx.feed(quiet.data(), quiet.size());
+        sent.insert(sent.end(), b.begin(), b.end());
+        b = tx.feed(noise.data(), noise.size());   // Below the threshold
+        sent.insert(sent.end(), b.begin(), b.end());
+    }
+    CHECK(sent.empty() && !tx.keyed());
+
+    // A second of tone: nothing until the lead is buffered, then frames of 4 SBC frames,
+    // then the end frame 300 ms after the tone stops
+    std::vector<int16_t> tone = btTone(1000, 1.0);
+    bt::Bytes first = tx.feed(tone.data(), 640 * 5);   // 100 ms
+    CHECK(first.empty() && tx.keyed());
+    sent = first;
+    for (size_t i = 640 * 5; i < tone.size(); i += 640) {
+        bt::Bytes b = tx.feed(tone.data() + i, 640);
+        sent.insert(sent.end(), b.begin(), b.end());
+    }
+    CHECK(tx.keyed() && btDecodeSent(sent).ends == 0);
+    for (int i = 0; i < 25; i++) {   // 500 ms quiet
+        bt::Bytes b = tx.feed(quiet.data(), quiet.size());
+        sent.insert(sent.end(), b.begin(), b.end());
+    }
+    BtSent result = btDecodeSent(sent);
+    CHECK(!tx.keyed() && tx.transmissions() == 1);
+    CHECK(result.ends == 1);
+    CHECK(std::fabs(result.seconds - 1.3) < 0.02);   // The tone and 300 ms of quiet
+    CHECK(result.biggestFrame == 4 * 88);
+
+    // finish() unkeys part way through; with nothing keyed it sends nothing
+    tx.feed(tone.data(), 6400);
+    bt::Bytes rest = tx.finish();
+    CHECK(btDecodeSent(rest).ends == 1 && !tx.keyed());
+    CHECK(tx.finish().empty());
+}
+
+void testBtSettings() {
+    Settings s;
+    s.bluetooth = "38:D2:00:01:C0:AB";
+    s.bluetoothName = "UV-PRO";
+    s.btPlayAudio = "3";
+    s.btRecordAudio = "4";
+    Settings back = parseSettings(formatSettings(s));
+    CHECK(back.bluetooth == s.bluetooth && back.bluetoothName == s.bluetoothName);
+    CHECK(back.btPlayAudio == "3" && back.btRecordAudio == "4");
+    CHECK(s.usesBluetooth());
+    s.audioFile = "x.wav";
+    CHECK(!s.usesBluetooth());   // A file wins
+
+    // Sound keys the radio, so VOX only
+    s.catPort = "/dev/ttyUSB0";
+    s.ptt = PttType::Cat;
+    CHECK(!pttProblem(s).empty());
+    s.ptt = PttType::Vox;
+    CHECK(pttProblem(s).empty());
+
+    using namespace connector;
+    Settings c;
+    c.callsign = "N0CALL-7";
+    c.catPort = "/dev/ttyUSB0";
+    c.ptt = PttType::Cat;
+    ConfigChange change = applyConfig(c, {{"bluetooth", {{"address", "38-d2-00-01-c0-ab"}}}});
+    CHECK(change.ok && change.restartRequired);
+    CHECK(c.bluetooth == "38:D2:00:01:C0:AB" && c.ptt == PttType::Vox);
+    CHECK(configToJson(c)["bluetooth"]["address"] == "38:D2:00:01:C0:AB");
+    CHECK(applyConfig(c, {{"bluetooth", {{"address", "radio"}}}}).field == "bluetooth.address");
+    CHECK(applyConfig(c, {{"bluetooth", {{"colour", "blue"}}}}).field == "bluetooth.colour");
+    CHECK(applyConfig(c, {{"ptt", {{"type", "cat"}}}}).field == "ptt");   // Not with Bluetooth
+    if (bluetoothUsesSavedAudio()) {
+        CHECK(missingConfig(c) == "rxAudio");
+    } else {
+        CHECK(missingConfig(c).empty());   // It brings its own sound card
+    }
+    CHECK(applyConfig(c, {{"bluetooth", {{"address", ""}}}}).ok && c.bluetooth.empty());
+    CHECK(missingConfig(c) == "rxAudio");
+}
+
 int runUnit() {
     struct Test {
         const char* name;
@@ -976,6 +1182,12 @@ int runUnit() {
         {"Connector waits at 300 baud before acking", testConnectorSlowAck},
         {"Connector request errors", testConnectorRequests},
         {"Connector config", testConnectorConfig},
+        {"Bluetooth addresses and UUIDs", testBtAddresses},
+        {"Bluetooth audio framing", testBtAudioFraming},
+        {"Bluetooth GAIA control frames", testBtGaia},
+        {"Bluetooth SBC audio", testBtSbc},
+        {"Bluetooth transmit keying", testBtTransmitter},
+        {"Bluetooth settings", testBtSettings},
     };
     string summary = "### Unit tests (" + runnerName() + ")\n\n| Result | Test | Checks |\n|---|---|---|\n";
     for (const Test& test : tests) {

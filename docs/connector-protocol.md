@@ -220,6 +220,7 @@ can start the radio before the main program connects. `config.set` takes any sub
   "fx25":"auto",
   "path":[],
   "rxAudio":"...", "txAudio":"...",
+  "bluetooth":{"address":"", "playAudio":"", "recordAudio":""},
   "radio":{"type":"cat","port":"COM5","baud":38400,"rigModel":1037},
   "ptt":{"type":"rts","port":"COM6"},
   "retry":{"tries":4,"extraWaitSeconds":10},
@@ -228,7 +229,7 @@ can start the radio before the main program connects. `config.set` takes any sub
 }
 ```
 
-Changing `callsign`, `packetBaud`, `fx25`, the audio devices, `radio` or `ptt` restarts
+Changing `callsign`, `packetBaud`, `fx25`, the audio devices, `bluetooth`, `radio` or `ptt` restarts
 direwolf. The reply says so with `restartRequired: true`, and messages in flight are kept.
 
 direwolf keys the radio itself; the connector never sets the frequency or mode.
@@ -237,6 +238,8 @@ direwolf keys the radio itself; the connector never sets the frequency or mode.
 |---|---|
 | `radio.type` | `none`; `cat` (a radio on `port`, with `baud` and Hamlib `rigModel`); `rigctld` (your own rigctld, `port` = host:port) |
 | `ptt.type` | `vox` (the default, e.g. FM on VHF/UHF); `cat` (a command over the radio's CAT port, needs `radio`); `rts` or `dtr` (that line of a serial port) |
+| `bluetooth.address` | A UV-Pro-style radio's Bluetooth address, e.g. `38:D2:00:01:C0:AB`, for audio over Bluetooth ([bluetooth-audio.md](bluetooth-audio.md)); `""` (the default) = sound cards. Setting one sets `ptt` to `vox`: the radio keys itself. On Linux and macOS `rxAudio`/`txAudio` are then unused |
+| `bluetooth.playAudio`, `bluetooth.recordAudio` | Windows only: the virtual cable ends the bridge plays the radio's audio into and records the transmit audio from (WinMM numbers, as in `audio.devices`). `rxAudio`/`txAudio` are the cables' other ends |
 | `ptt.port` | `rts`/`dtr` only: the serial port, e.g. a second USB port like the FTDX3000's Standard port. `""` = the radio's CAT port |
 
 `radio` and `ptt` are checked together: `ptt` `cat` without a `radio`, or `rts` on a
