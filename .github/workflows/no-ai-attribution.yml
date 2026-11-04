@@ -4,6 +4,8 @@ name: No AI attribution
 # AI as a co-author. Required for merging into master, so none reaches the contributors list
 on:
   pull_request:
+    # "edited" re-runs it when the title or description changes
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
