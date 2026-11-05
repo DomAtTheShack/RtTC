@@ -25,6 +25,8 @@ void addNoise(Audio& audio, float snrDb, uint32_t seed = 1);
 
 // 16-bit PCM
 bool writeWav(const std::string& path, const Audio& audio);
+// 16-bit PCM; only the first channel of stereo
+bool readWav(const std::string& path, Audio& audio);
 
 } // namespace fsk
 

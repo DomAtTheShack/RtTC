@@ -2,8 +2,8 @@
 //   unit   The code on its own: settings, direwolf's config, AX.25, FX.25, the connector,
 //          the Bluetooth protocol
 //   audio  Decodes tests/audio with direwolf's atest (skipped without it)
-//   channel AX.25 through simulated NFM and SSB radios with noise, mistuning and fading:
-//          how far each mode gets. The audio is saved in channel-audio next to the program
+//   channel AX.25 and FX.25 through simulated VHF/UHF FM radios with noise: how far each
+//          mode gets. The audio is saved in channel-audio next to the program
 //   cat    Radio control through Hamlib's dummy rig, or a real radio with --cat-port
 //   air    RadioConnector and a stand-in station over the sound cards (e.g. VB-Cable):
 //          receiving, a missing part, and sending with acks. Skipped without sound cards
@@ -358,11 +358,17 @@ void testDirewolfConfig() {
     s.callsign = "N0CALL-7";
     std::string vox = direwolfConfig(s, "plughw:1,0", "default", 7001);
     CHECK(vox.find("ADEVICE plughw:1,0 default\n") != std::string::npos);
-    CHECK(vox.find("MODEM 300\n") != std::string::npos);
+    CHECK(vox.find("MODEM 300 AB+\nFIX_BITS 1 AX25\n") != std::string::npos);
     CHECK(vox.find("MYCALL N0CALL-7\n") != std::string::npos);
     CHECK(vox.find("KISSPORT 0\nKISSPORT 7001\n") != std::string::npos);
     CHECK(vox.find("AGWPORT 0\n") != std::string::npos);
     CHECK(vox.find("PTT") == std::string::npos);           // VOX: direwolf mustn't key anything
+    Settings vhf = s;
+    vhf.packetBaud = 1200;
+    CHECK(direwolfConfig(vhf, "1", "2", 7001).find("MODEM 1200 E+\nFIX_BITS 1 AX25\n") != std::string::npos);
+    CHECK(contains(atestArgs(vhf, "in.wav"), {"-B", "1200", "-P", "E+", "-F", "1"}));
+    vhf.packetBaud = 9600;
+    CHECK(direwolfConfig(vhf, "1", "2", 7001).find("MODEM 9600 +\nFIX_BITS 1 AX25\n") != std::string::npos);
 
     s.catPort = "COM5";
     CHECK(direwolfConfig(s, "1", "2", 7001).find("PTT") == std::string::npos);   // A CAT port alone keys nothing
@@ -382,7 +388,7 @@ void testDirewolfConfig() {
     CHECK(direwolfConfig(s, "1", "2", 7001).find("PTT RIG 2 localhost:4532\n") != std::string::npos);
 
     auto atest = atestArgs(s, "in.wav");
-    CHECK(contains(atest, {"-B", "300", "-h", "in.wav"}));
+    CHECK(contains(atest, {"-B", "300", "-P", "AB+", "-F", "1", "-h", "in.wav"}));
     auto gen = genPacketsArgs(s, "out.wav");
     CHECK(contains(gen, {"-B", "300"}));
     CHECK(contains(gen, {"-o", "out.wav", "-"}));
@@ -413,30 +419,8 @@ void testChannelModels() {
     dataPorts.micPath = false;
     CHECK(std::fabs(toneHz(sim::nfm(tone, micPath)) - 1000) < 2);
     CHECK(std::fabs(toneHz(sim::nfm(tone, dataPorts)) - 1000) < 2);
-    sim::Ssb ssb;
-    CHECK(std::fabs(toneHz(sim::ssb(tone, ssb)) - 1000) < 2);
-    ssb.mistuneHz = 50;
-    CHECK(std::fabs(toneHz(sim::ssb(tone, ssb)) - 1050) < 2);
-    ssb.mistuneHz = -25;
-    CHECK(std::fabs(toneHz(sim::ssb(tone, ssb)) - 975) < 2);
-
-    // At 10 dB SNR, the clean signal is 10/11 of the noisy one's power
-    sim::Ssb clean, noisy;
-    noisy.snrDb = 10;
-    fsk::Audio a = sim::ssb(tone, clean), b = sim::ssb(tone, noisy);
-    double ab = 0, aa = 0, bb = 0;
-    for (size_t i = a.samples.size() / 4; i < a.samples.size() * 3 / 4; i++) {
-        ab += a.samples[i] * b.samples[i];
-        aa += a.samples[i] * a.samples[i];
-        bb += b.samples[i] * b.samples[i];
-    }
-    double signalShare = ab * ab / (aa * bb);
-    CHECK(std::fabs(signalShare - 10.0 / 11) < 0.02);
 
     // The same seed gives the same audio
-    noisy.dopplerHz = 1;
-    noisy.delayMs = 2;
-    CHECK(sim::ssb(tone, noisy).samples == sim::ssb(tone, noisy).samples);
     sim::Nfm weak;
     weak.cnrDb = 8;
     CHECK(sim::nfm(tone, weak).samples == sim::nfm(tone, weak).samples);
@@ -1672,6 +1656,7 @@ struct ChannelScenario {
     int baud;
     int frames;
     std::vector<ChannelRow> rows;
+    int fx25 = 0;                // >0: sent as FX.25 (made by gen_packets), as Settings::fx25
 };
 
 using Radio = std::function<fsk::Audio(const fsk::Audio&)>;
@@ -1683,17 +1668,6 @@ Radio nfmRadio(bool mic, float ifBandwidth, float cnr) {
         radio.ifBandwidthHz = ifBandwidth;
         radio.cnrDb = cnr;
         return sim::nfm(audio, radio);
-    };
-}
-
-Radio ssbRadio(float snr, float mistune = 0, float doppler = 0, float delayMs = 0) {
-    return [=](const fsk::Audio& audio) {
-        sim::Ssb radio;
-        radio.snrDb = snr;
-        radio.mistuneHz = mistune;
-        radio.dopplerHz = doppler;
-        radio.delayMs = delayMs;
-        return sim::ssb(audio, radio);
     };
 }
 
@@ -1713,51 +1687,40 @@ std::vector<ChannelRow> noiseSweep(const string& prefix, const string& what,
     return rows;
 }
 
+std::vector<ChannelRow> nfm1200Sweep(const string& prefix) {
+    return noiseSweep(prefix, "CNR", {20, 15, 12, 10, 9, 8, 7, 6, 5},
+                      [](float cnr) { return nfmRadio(true, 12500, cnr); }, 0.95f);
+}
+
+std::vector<ChannelRow> nfm9600Sweep(const string& prefix) {
+    return noiseSweep(prefix, "CNR", {25, 20, 16, 13, 11, 10, 9, 8, 7},
+                      [](float cnr) { return nfmRadio(false, 15000, cnr); }, 0.95f);
+}
+
 std::vector<ChannelScenario> channelScenarios() {
     std::vector<ChannelScenario> scenarios;
     scenarios.push_back({"AX.25 1200 on NFM, microphone in and speaker out",
         "The usual VHF/UHF setup: 3 kHz deviation, 12.5 kHz receiver IF, pre- and de-emphasis, "
         "300-3000 Hz audio. CNR is carrier to noise in the IF; FM's threshold is near 10 dB",
-        1200, 20,
-        noiseSweep("nfm1200", "CNR", {20, 15, 12, 10, 9, 8, 7, 6, 4},
-                   [](float cnr) { return nfmRadio(true, 12500, cnr); }, 0.95f)});
+        1200, 20, nfm1200Sweep("nfm1200")});
+    ChannelScenario fx1200{"FX.25 1200 on NFM, microphone in and speaker out",
+        "As AX.25 1200, sent with FX.25 (Auto), as RadioConnector sends by default",
+        1200, 20, nfm1200Sweep("fx25_nfm1200")};
+    fx1200.fx25 = 1;
+    scenarios.push_back(fx1200);
     scenarios.push_back({"AX.25 9600 on NFM, data ports",
         "Flat audio in and out (the radio's 9600 data jack): 3 kHz deviation, 15 kHz IF",
-        9600, 20,
-        noiseSweep("nfm9600", "CNR", {25, 20, 16, 13, 11, 10, 9, 8},
-                   [](float cnr) { return nfmRadio(false, 15000, cnr); }, 0.95f)});
+        9600, 20, nfm9600Sweep("nfm9600")});
+    ChannelScenario fx9600{"FX.25 9600 on NFM, data ports",
+        "As AX.25 9600, sent with FX.25 (Auto)", 9600, 20, nfm9600Sweep("fx25_nfm9600")};
+    fx9600.fx25 = 1;
+    scenarios.push_back(fx9600);
     scenarios.push_back({"AX.25 9600 on NFM, microphone and speaker",
         "Not expected to decode: emphasis and the 300-3000 Hz audio filters ruin 9600, which "
         "is why it needs the data ports",
         9600, 20,
         noiseSweep("nfm9600mic", "CNR", {20},
                    [](float cnr) { return nfmRadio(true, 15000, cnr); }, -1, -1)});
-    scenarios.push_back({"AX.25 300 on SSB, noise",
-        "HF packet: 1600/1800 Hz tones through a 300-2700 Hz SSB transmitter and receiver. SNR "
-        "is the average signal to noise in the 2400 Hz passband",
-        300, 10,
-        noiseSweep("ssb300", "SNR", {20, 15, 10, 6, 4, 3, 2, 0, -3},
-                   [](float snr) { return ssbRadio(snr); }, 0.9f)});
-
-    ChannelScenario mistuned{"AX.25 300 on SSB, mistuned",
-        "The receiver off frequency, at 15 dB SNR: every tone moves by that much", 300, 10, {}};
-    for (float hz : {10.0f, 25.0f, 50.0f, 100.0f}) {
-        char label[32], file[48];
-        std::snprintf(label, sizeof label, "%g Hz off", hz);
-        std::snprintf(file, sizeof file, "ssb300_mistune%g.wav", hz);
-        mistuned.rows.push_back({label, file, ssbRadio(15, hz)});
-    }
-    scenarios.push_back(mistuned);
-
-    // The ITU-R F.1487 (CCIR 520) HF channels
-    ChannelScenario fading{"AX.25 300 on SSB, fading",
-        "Watterson model: two equal paths that fade on their own, the second delayed, at 15 dB "
-        "average SNR", 300, 10, {}};
-    fading.rows.push_back({"good (0.1 Hz, 0.5 ms)", "ssb300_fading_good.wav", ssbRadio(15, 0, 0.1f, 0.5f)});
-    fading.rows.push_back({"moderate (0.5 Hz, 1 ms)", "ssb300_fading_moderate.wav", ssbRadio(15, 0, 0.5f, 1)});
-    fading.rows.push_back({"poor (1 Hz, 2 ms)", "ssb300_fading_poor.wav", ssbRadio(15, 0, 1, 2)});
-    fading.rows.push_back({"flutter (10 Hz, 0.5 ms)", "ssb300_fading_flutter.wav", ssbRadio(15, 0, 10, 0.5f)});
-    scenarios.push_back(fading);
     return scenarios;
 }
 
@@ -1765,6 +1728,34 @@ std::vector<ChannelScenario> channelScenarios() {
 string channelDir() {
     string exeDir = os::executableDir();
     return (std::filesystem::path(exeDir.empty() ? "." : exeDir) / "channel-audio").string();
+}
+
+// FX.25 frames: direwolf's gen_packets makes them, as RadioConnector's direwolf would send
+bool genPacketsAudio(const Settings& settings, const std::vector<string>& texts, const string& path,
+                     fsk::Audio& audio, string& error) {
+    os::Process process;
+    if (!process.start(genPacketsArgs(settings, path), true, true, "", true)) {
+        error = "gen_packets: " + process.error();
+        return false;
+    }
+    string lines;
+    for (const string& text : texts)
+        for (const string& line : packet::monitorLines(testCallsign, packet::groupAddress, text))
+            lines += line + "\n";
+    process.write(lines);
+    process.closeStdin();
+    char buffer[4096];
+    while (process.read(buffer, sizeof buffer) > 0) {}   // It echoes every frame
+    int status = process.wait();
+    if (status != 0) {
+        error = "gen_packets exited with " + std::to_string(status);
+        return false;
+    }
+    bool ok = fsk::readWav(path, audio);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    if (!ok) error = "can't read gen_packets' " + path;
+    return ok;
 }
 
 int runChannel() {
@@ -1797,7 +1788,20 @@ int runChannel() {
             texts.push_back(text);
             frames.push_back(packet::encodeUi(testCallsign, packet::groupAddress, text));
         }
-        fsk::Audio clean = fsk::ax25(frames, scenario.baud, 48000);
+        fsk::Audio clean;
+        if (scenario.fx25 > 0) {
+            settings.fx25 = scenario.fx25;
+            string error;
+            string cleanPath = (std::filesystem::path(dir) / "fx25_clean.wav").string();
+            if (!genPacketsAvailable() || !genPacketsAudio(settings, texts, cleanPath, clean, error)) {
+                string why = error.empty() ? "gen_packets (from direwolf) not found" : error;
+                std::printf("%s\n  SKIP  %s\n", scenario.title.c_str(), why.c_str());
+                summary += "\n#### " + scenario.title + "\n\n⏭️ Skipped: " + why + "\n";
+                continue;
+            }
+        } else {
+            clean = fsk::ax25(frames, scenario.baud, 48000);
+        }
 
         std::printf("%s\n", scenario.title.c_str());
         summary += "\n#### " + scenario.title + "\n\n" + scenario.about + "\n\n"
@@ -1863,7 +1867,7 @@ void usage(const char* program) {
         "  --audio-dir DIR      test audio to decode (default: test-audio next to the program,\n"
         "                       else the source's tests/audio)\n"
         "  --generate DIR       write the test audio files to DIR, then exit\n"
-        "channel (AX.25 through simulated NFM and SSB radios; needs atest)\n"
+        "channel (AX.25 and FX.25 through simulated VHF/UHF FM radios; needs atest)\n"
         "  Every row's audio is saved in channel-audio next to the program\n"
         "cat\n"
         "  --cat-port PORT      test a real radio on PORT (e.g. COM5) instead of Hamlib's\n"

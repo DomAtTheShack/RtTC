@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <complex>
 #include <vector>
 
 namespace sim {
@@ -10,7 +9,6 @@ namespace sim {
 namespace {
 
 constexpr double pi = 3.14159265358979323846;
-using Complex = std::complex<double>;
 
 // Same numbers on every OS (std::normal_distribution differs between standard libraries)
 class Random {
@@ -93,25 +91,6 @@ Filter audioBand(double rate, double lowHz, double highHz) {
 constexpr double emphasisHz = 1e6 / (2 * pi * 750);
 constexpr double emphasisTopHz = 8000;   // Where the transmitter's emphasis stops rising
 
-// One Watterson path: Gaussian Doppler spectrum, made from a sum of sinusoids
-class Fading {
-public:
-    Fading(double dopplerHz, Random& random) {
-        for (int i = 0; i < 16; i++) {
-            hz_.push_back(random.gaussian() * dopplerHz / 2);   // Spread = 2 sigma
-            phase_.push_back(2 * pi * random.uniform());
-        }
-    }
-    Complex gain(double seconds) const {
-        Complex sum;
-        for (size_t i = 0; i < hz_.size(); i++) sum += std::polar(1.0, 2 * pi * hz_[i] * seconds + phase_[i]);
-        return sum / std::sqrt(static_cast<double>(hz_.size()));
-    }
-
-private:
-    std::vector<double> hz_, phase_;
-};
-
 } // namespace
 
 fsk::Audio nfm(const fsk::Audio& audio, const Nfm& radio) {
@@ -154,74 +133,6 @@ fsk::Audio nfm(const fsk::Audio& audio, const Nfm& radio) {
         if (radio.micPath) d = speaker.run(d);
         out.samples.push_back(static_cast<float>(0.5 * d));
     }
-    return out;
-}
-
-fsk::Audio ssb(const fsk::Audio& audio, const Ssb& radio) {
-    const double rate = audio.rate;
-    const size_t n = audio.samples.size();
-    Filter txFilter = audioBand(rate, 300, 2700);
-    std::vector<double> x(n);
-    for (size_t i = 0; i < n; i++) x[i] = txFilter.run(audio.samples[i]);
-
-    // Signal power while transmitting, not counting the gaps between frames
-    double power = 0;
-    size_t active = 0;
-    for (double v : x) {
-        if (std::fabs(v) < 1e-4) continue;
-        power += v * v;
-        active++;
-    }
-    power = active ? power / static_cast<double>(active) : 0;
-
-    // The analytic signal (a Hilbert transformer), so tones can be moved and faded
-    const int half = 127;
-    std::vector<double> hilbert(2 * half + 1, 0.0);
-    for (int k = -half; k <= half; k++) {
-        if (k % 2 == 0) continue;
-        double window = 0.42 + 0.5 * std::cos(pi * k / half) + 0.08 * std::cos(2 * pi * k / half);
-        hilbert[k + half] = 2 / (pi * k) * window;
-    }
-    std::vector<Complex> analytic(n);
-    for (size_t i = 0; i < n; i++) {
-        double im = 0;
-        for (int k = -half; k <= half; k += 2) {
-            long j = static_cast<long>(i) - k;
-            if (j >= 0 && j < static_cast<long>(n)) im += hilbert[k + half] * x[j];
-        }
-        analytic[i] = {x[i], im};
-    }
-
-    Random random(radio.seed);
-    bool fading = radio.dopplerHz > 0;
-    Fading first(radio.dopplerHz, random), second(radio.dopplerHz, random);
-    auto delay = static_cast<size_t>(std::lround(radio.delayMs * rate / 1000));
-    double sigma = std::isfinite(radio.snrDb) && power > 0
-        ? std::sqrt(power / std::pow(10.0, radio.snrDb / 10) * (rate / 2) / 2400) : 0;
-    Filter rxFilter = audioBand(rate, 300, 2700);
-
-    std::vector<double> y(n);
-    Complex g1 = 1, g2 = 0;
-    for (size_t i = 0; i < n; i++) {
-        double t = static_cast<double>(i) / rate;
-        if (fading && i % 32 == 0) {   // The fading changes slowly; every 32 samples is plenty
-            g1 = first.gain(t) * std::sqrt(0.5);
-            g2 = second.gain(t) * std::sqrt(0.5);
-        }
-        Complex s = g1 * analytic[i];
-        if (fading && i >= delay) s += g2 * analytic[i - delay];
-        s *= std::polar(1.0, 2 * pi * radio.mistuneHz * t);
-        y[i] = rxFilter.run(s.real() + sigma * random.gaussian());
-    }
-
-    // The receiver's AGC
-    double rms = 0;
-    for (double v : y) rms += v * v;
-    rms = n ? std::sqrt(rms / static_cast<double>(n)) : 0;
-    fsk::Audio out;
-    out.rate = audio.rate;
-    out.samples.reserve(n);
-    for (double v : y) out.samples.push_back(static_cast<float>(rms > 0 ? 0.2 * v / rms : 0));
     return out;
 }
 

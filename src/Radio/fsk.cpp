@@ -185,4 +185,42 @@ bool writeWav(const std::string& path, const Audio& audio) {
     return std::fclose(f) == 0 && ok;
 }
 
+bool readWav(const std::string& path, Audio& audio) {
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return false;
+    std::vector<uint8_t> bytes;
+    uint8_t buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+    std::fclose(f);
+    auto le = [&](size_t at, int size) {
+        uint32_t value = 0;
+        for (int i = size - 1; i >= 0; i--) value = value << 8 | bytes[at + static_cast<size_t>(i)];
+        return value;
+    };
+    if (bytes.size() < 12 || std::memcmp(bytes.data(), "RIFF", 4) != 0 ||
+        std::memcmp(bytes.data() + 8, "WAVE", 4) != 0) return false;
+    unsigned channels = 0, bits = 0;
+    for (size_t at = 12; at + 8 <= bytes.size();) {
+        uint32_t size = le(at + 4, 4);
+        size_t body = at + 8;
+        size_t end = std::min(bytes.size(), body + size);
+        if (std::memcmp(bytes.data() + at, "fmt ", 4) == 0 && size >= 16) {
+            if (le(body, 2) != 1) return false;                        // PCM only
+            channels = le(body + 2, 2);
+            audio.rate = static_cast<int>(le(body + 4, 4));
+            bits = le(body + 14, 2);
+        } else if (std::memcmp(bytes.data() + at, "data", 4) == 0) {
+            if (bits != 16 || channels == 0) return false;
+            size_t step = 2 * channels;
+            audio.samples.clear();
+            for (size_t i = body; i + step <= end; i += step)
+                audio.samples.push_back(static_cast<float>(static_cast<int16_t>(le(i, 2))) / 32768.0f);
+            return true;
+        }
+        at = body + size + (size & 1);                                 // Chunks are padded to even
+    }
+    return false;
+}
+
 } // namespace fsk
