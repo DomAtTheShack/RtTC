@@ -404,7 +404,7 @@ bool runDirewolf(const Settings& settings, const string& rxName, const string& t
     fs::path config = fs::temp_directory_path() / configName;
     {
         std::ofstream out(config, std::ios::trunc);
-        out << direwolfConfig(settings, direwolfDevice(rxName), direwolfDevice(txName), kissPort);
+        out << direwolfConfig(settings, direwolfDevice(rxName, false), direwolfDevice(txName, true), kissPort);
         if (!out) {
             ansi::print(failColor, "Could not write %s\n", config.string().c_str());
             return false;

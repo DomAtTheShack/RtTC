@@ -283,7 +283,7 @@ public:
         configPath = fs::temp_directory_path() / configName;
         {
             std::ofstream out(configPath, std::ios::trunc);
-            out << direwolfConfig(settings, direwolfDevice(rxDevice), direwolfDevice(txDevice), kissPort);
+            out << direwolfConfig(settings, direwolfDevice(rxDevice, false), direwolfDevice(txDevice, true), kissPort);
             if (!out) return fail("couldn't write " + configPath.string());
         }
         process = std::make_unique<os::Process>();

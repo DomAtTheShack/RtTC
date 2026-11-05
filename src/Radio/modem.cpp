@@ -2,6 +2,11 @@
 
 #include <cstdio>
 
+#ifdef __APPLE__
+#include <CoreAudio/CoreAudio.h>
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 #include "../backend.h"
 
 const char* packetModemName(int baud) {
@@ -12,11 +17,46 @@ const char* packetModemName(int baud) {
     }
 }
 
-std::string direwolfDevice(const std::string& name) {
 #ifdef __APPLE__
+namespace {
+
+// Name of the Mac's default input or output device, e.g. "MacBook Pro Microphone".
+// Empty if CoreAudio can't say
+std::string defaultCoreAudioName(bool playback) {
+    AudioObjectPropertyAddress address = {
+        playback ? kAudioHardwarePropertyDefaultOutputDevice
+                 : kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+    AudioDeviceID device = kAudioObjectUnknown;
+    UInt32 size = sizeof device;
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, &device) != noErr ||
+        device == kAudioObjectUnknown)
+        return "";
+
+    address.mSelector = kAudioObjectPropertyName;
+    CFStringRef cfName = nullptr;
+    size = sizeof cfName;
+    if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &cfName) != noErr || !cfName)
+        return "";
+    char buffer[256] = {};
+    bool ok = CFStringGetCString(cfName, buffer, sizeof buffer, kCFStringEncodingUTF8);
+    CFRelease(cfName);
+    return ok ? buffer : "";
+}
+
+} // namespace
+#endif
+
+std::string direwolfDevice(const std::string& name, bool playback) {
+#ifdef __APPLE__
+    // direwolf's PortAudio build only takes exact device names; "default" matches nothing.
+    // The app's names are PulseAudio's, so use the system default device's CoreAudio name
     (void)name;
-    return "default";
+    std::string device = defaultCoreAudioName(playback);
+    // Quoted: Mac names have spaces, which would split the ADEVICE line
+    return device.empty() ? "default" : "\"" + device + "\"";
 #else
+    (void)playback;
     // Windows: WinMM index. Linux: ALSA name
     return name.empty() ? "default" : name;
 #endif
