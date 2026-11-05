@@ -1,4 +1,4 @@
-// modem.h - direwolf's command lines and config.
+// Direwolf's command lines and config.
 #ifndef RTC_MODEM_H
 #define RTC_MODEM_H
 

@@ -1,4 +1,4 @@
-// rfcomm_linux.cpp - RFCOMM with BlueZ: SDP finds the channel for the UUID, then a plain
+// RFCOMM with BlueZ: SDP finds the channel for the UUID, then a plain
 // RFCOMM socket connects to it (HTCommander's Linux plugin does the same). The radio
 // must be paired first, e.g. with bluetoothctl or the desktop's Bluetooth settings.
 #include "rfcomm.h"

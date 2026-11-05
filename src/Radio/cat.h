@@ -1,4 +1,4 @@
-// cat.h - Radio control through Hamlib.
+// Radio control through Hamlib.
 #ifndef RTC_CAT_H
 #define RTC_CAT_H
 

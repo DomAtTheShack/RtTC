@@ -1,4 +1,4 @@
-// channel.h - Simulated radio paths for RadioTests' channel group: narrow FM (VHF/UHF)
+// Simulated radio paths for RadioTests' channel group: narrow FM (VHF/UHF)
 // and SSB (HF), with the radios' own filtering plus noise, mistuning and fading.
 #ifndef RTC_CHANNEL_H
 #define RTC_CHANNEL_H

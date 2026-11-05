@@ -1,4 +1,4 @@
-// backend.h - Everything that differs between Windows, Linux and macOS.
+// Everything that differs between Windows, Linux and macOS.
 #ifndef RTC_BACKEND_H
 #define RTC_BACKEND_H
 
@@ -11,7 +11,7 @@
 
 namespace os {
 
-// ---- Processes ---------------------------------------------------------------
+// Processes
 
 class Process {
 public:
@@ -56,7 +56,7 @@ private:
 int runAndPipe(const std::vector<std::string>& argv,
                const std::function<void(std::string_view)>& onOutput);
 
-// ---- Network -----------------------------------------------------------------
+// Network
 
 // One thread may read while another writes or shuts it down
 class TcpConnection {
@@ -100,7 +100,7 @@ private:
 // An unused port below 49152 (direwolf's limit), or 0
 int freeTcpPort();
 
-// ---- Audio devices -----------------------------------------------------------
+// Audio devices
 
 enum class AudioDirection { Capture, Playback };
 
@@ -118,16 +118,16 @@ std::string playTone(const std::string& device, const std::vector<int16_t>& seco
                      const std::function<bool()>& keepGoing);
 
 
-// ---- Serial ports ------------------------------------------------------------
+// Serial ports
 
 std::vector<std::string> listSerialPorts();
 
-// ---- Files -------------------------------------------------------------------
+// Files
 
 bool fileExists(const std::string& path);
 bool fileReadable(const std::string& path);
 
-// ---- Terminal ----------------------------------------------------------------
+// Terminal
 
 bool isTerminal(FILE* stream);
 // Keys one at a time, no echo
@@ -140,7 +140,7 @@ void enableAnsiEscapes();
 struct TerminalSize { int rows; int cols; };
 TerminalSize terminalSize();          // 24x80 if unknown
 
-// ---- Programs ----------------------------------------------------------------
+// Programs
 
 const char* direwolfPath();
 const char* atestPath();

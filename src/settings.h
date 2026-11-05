@@ -1,4 +1,4 @@
-// settings.h - Settings and their file.
+// Settings and their file.
 #ifndef RTC_SETTINGS_H
 #define RTC_SETTINGS_H
 

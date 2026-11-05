@@ -1,4 +1,4 @@
-// rfcomm_windows.cpp - RFCOMM with Winsock (AF_BTH). Giving connect() the service UUID
+// RFCOMM with Winsock (AF_BTH). Giving connect() the service UUID
 // makes Windows look the channel up with SDP. HTCommander's Windows build reaches the same
 // services through WinRT; this is the plain Winsock way. Pair the radio in Windows'
 // Bluetooth settings first. Untested on a radio.

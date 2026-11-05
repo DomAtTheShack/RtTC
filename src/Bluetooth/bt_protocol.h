@@ -1,4 +1,4 @@
-// bt_protocol.h - What goes over Bluetooth to radios with a Benshi audio channel (BTech
+// What goes over Bluetooth to radios with a Benshi audio channel (BTech
 // UV-Pro and UV-50Pro, Radioddity GA-5WB, Vero VR-N75/N76/N7500/N7600): the audio
 // channel's framing, its SBC audio, and the GAIA control frames. No Bluetooth calls here.
 //
@@ -19,7 +19,7 @@ namespace bt {
 
 using Bytes = std::vector<uint8_t>;
 
-// ---- Services ------------------------------------------------------------------------
+// Services
 
 // RFCOMM services, found with SDP. Control: Serial Port, carrying GAIA. Audio: the vendor
 // "BS AOC" service, carrying SBC audio
@@ -33,7 +33,7 @@ bool parseAddress(std::string_view text, uint8_t out[6]);
 // Upper case with ':'; "" if text isn't an address
 std::string normalizeAddress(std::string_view text);
 
-// ---- Audio channel framing -------------------------------------------------------------
+// Audio channel framing
 
 // 0x7e <command> <payload> 0x7e, with 0x7d and 0x7e in between sent as 0x7d, byte ^ 0x20
 constexpr uint8_t audioFlag = 0x7e;
@@ -67,7 +67,7 @@ private:
     Bytes current;
 };
 
-// ---- GAIA (control channel) ---------------------------------------------------------------
+// GAIA (control channel)
 
 // FF 01 <flags> <data length> <group: 2 bytes> <command: 2 bytes> <data>, big endian
 constexpr uint16_t gaiaBasic = 2;
@@ -107,7 +107,7 @@ private:
 // From an HT status notification: whether the radio is transmitting. -1 if frame isn't one
 int transmitting(const GaiaFrame& frame);
 
-// ---- SBC -------------------------------------------------------------------------------
+// SBC
 
 // The radio's audio: 32 kHz mono 16-bit, SBC with 16 blocks, 8 subbands and loudness
 // allocation. Each SBC frame is 128 samples (4 ms)
@@ -150,7 +150,7 @@ private:
     int bad = 0;
 };
 
-// ---- Transmit -------------------------------------------------------------------------
+// Transmit
 
 // The radio transmits while audio frames arrive and stops at endAudioFrame(). The modems
 // play into a virtual sound card that gives silence (zeros) between transmissions, so

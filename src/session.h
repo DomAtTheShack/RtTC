@@ -1,4 +1,4 @@
-// session.h - Packet sessions (direwolf), and writing packets to a file. Each returns on
+// Packet sessions (direwolf), and writing packets to a file. Each returns on
 // Esc or when done.
 #ifndef RTC_SESSION_H
 #define RTC_SESSION_H
@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-// ---- Writing packets to a file (gen_packets) ---------------------------------------
+// Writing packets to a file (gen_packets)
 
 struct TransmitFormat {
     const char* name = "gen_packets";
@@ -19,7 +19,7 @@ struct TransmitFormat {
 // Tab finishes, Esc stops. false if it failed
 bool runFileTransmit(const std::vector<std::string>& args, const TransmitFormat& format);
 
-// ---- Packets (direwolf) ----------------------------------------------------------
+// Packets (direwolf)
 
 struct PacketSession {
     std::vector<std::string> direwolfArgs;

@@ -1,4 +1,4 @@
-// radio_tests.cpp - RadioTests: every test, with no arguments needed (run by ctest too).
+// RadioTests: every test, with no arguments needed (run by ctest too).
 //   unit   The code on its own: settings, direwolf's config, AX.25, FX.25, the connector,
 //          the Bluetooth protocol
 //   audio  Decodes tests/audio with direwolf's atest (skipped without it)
@@ -48,7 +48,7 @@ using std::string;
 
 namespace {
 
-// ---- GitHub Actions reporting ------------------------------------------------
+// GitHub Actions reporting
 
 bool onGitHub() {
     const char* value = std::getenv("GITHUB_ACTIONS");
@@ -107,7 +107,7 @@ std::string percent(float value) {
     return buf;
 }
 
-// ---- Unit test checks --------------------------------------------------------
+// Unit test checks
 
 int failures = 0;
 int checks = 0;
@@ -451,7 +451,7 @@ void testAccuracy() {
     CHECK(normalizeText("  A \r\n B  ") == "A B");
 }
 
-// ---- Radio Connector -----------------------------------------------------------
+// Radio Connector
 
 void testAx25Path() {
     packet::Bytes frame = packet::encodeUi("N0CALL-7", "K1ABC-3", "x", {"WIDE1-1", "WIDE2-2"});
@@ -863,7 +863,7 @@ void testConnectorConfig() {
     CHECK(parseSettings("retry_tries=0\n").retryTries == 4);   // Out of range keeps the default
 }
 
-// ---- Bluetooth audio (protocol only; no radio needed) -------------------------------
+// Bluetooth audio (protocol only; no radio needed)
 
 void testBtAddresses() {
     uint8_t uuid[16];
@@ -1173,7 +1173,7 @@ int runAudio(const std::string& dir) {
     return failed == 0 ? 0 : 1;
 }
 
-// ---- Options -------------------------------------------------------------------
+// Options
 
 const std::vector<string> allGroups = {"unit", "audio", "channel", "cat", "air"};
 
@@ -1190,7 +1190,7 @@ struct Options {
 
 const int skippedCode = 77;
 
-// ---- CAT ---------------------------------------------------------------------------
+// CAT
 
 // Hamlib's dummy rig by default; with --cat-port, a real radio. A real radio is keyed for
 // a moment, then put back on its frequency and mode
@@ -1235,7 +1235,7 @@ int runCat(const Options& options) {
     return failed ? 1 : 0;
 }
 
-// ---- Over the air ------------------------------------------------------------------
+// Over the air
 
 using Clock = std::chrono::steady_clock;
 
@@ -1654,7 +1654,7 @@ int runAir(const Options& options) {
     return failed ? 1 : 0;
 }
 
-// ---- Simulated radio channels ---------------------------------------------------------
+// Simulated radio channels
 
 // Not pass/fail for every row: how far each mode gets before it breaks. Only the perfect
 // and strongest rows have to decode. Every row's audio is saved, to listen to
@@ -1847,7 +1847,7 @@ int runChannel() {
     return failed == 0 ? 0 : 1;
 }
 
-// ---- Command line --------------------------------------------------------------------
+// Command line
 
 void usage(const char* program) {
     std::printf(

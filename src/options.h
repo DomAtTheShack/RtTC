@@ -1,4 +1,4 @@
-// options.h - Choices for the settings menus.
+// Choices for the settings menus.
 #ifndef RTC_OPTIONS_H
 #define RTC_OPTIONS_H
 

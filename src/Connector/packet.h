@@ -1,4 +1,4 @@
-// packet.h - AX.25 UI frames, KISS framing, and atest/gen_packets formats.
+// AX.25 UI frames, KISS framing, and atest/gen_packets formats.
 #ifndef RTC_PACKET_H
 #define RTC_PACKET_H
 
@@ -42,7 +42,7 @@ std::vector<std::string> splitInfo(std::string_view text, size_t maxBytes = maxI
 // One line; control bytes shown as <0x0d>
 std::string printable(std::string_view info);
 
-// ---- KISS --------------------------------------------------------------------
+// KISS
 
 std::string kissEncode(const Bytes& frame);   // Port 0 data frame
 
@@ -56,7 +56,7 @@ private:
     bool inFrame = false;
 };
 
-// ---- direwolf's file tools ---------------------------------------------------
+// direwolf's file tools
 
 // Frames from "atest -h" hex dumps
 std::vector<Bytes> parseAtestDump(std::string_view output);

@@ -1,4 +1,4 @@
-// rfcomm.h - Bluetooth Classic RFCOMM connections, found by service UUID (SDP).
+// Bluetooth Classic RFCOMM connections, found by service UUID (SDP).
 //   Linux    BlueZ sockets (libbluetooth for SDP), as HTCommander's Linux build does
 //   Windows  Winsock AF_BTH: Windows does the SDP lookup from the UUID
 //   macOS    IOBluetooth (rfcomm_macos.mm)

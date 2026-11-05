@@ -1,4 +1,4 @@
-// testcases.h - The tests/audio test cases, used by ctest and the Test tools menu.
+// The tests/audio test cases, used by ctest and the Test tools menu.
 #ifndef RTC_TESTCASES_H
 #define RTC_TESTCASES_H
 

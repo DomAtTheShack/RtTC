@@ -1,4 +1,4 @@
-// radio_connector.cpp - Headless: connects one radio (direwolf, AX.25 and FX.25) to the
+// Headless: connects one radio (direwolf, AX.25 and FX.25) to the
 // suite's main program over JSON/TCP. See docs/connector-protocol.md.
 //
 // One thread runs everything below; the main program's socket, direwolf's output and
@@ -85,7 +85,7 @@ std::string isoUtc(std::chrono::system_clock::time_point when) {
     return buf;
 }
 
-// ---- Events ----------------------------------------------------------------------
+// Events
 
 struct Event {
     enum class Type {
@@ -121,7 +121,7 @@ private:
     std::deque<Event> events;
 };
 
-// ---- The main program ---------------------------------------------------------------
+// The main program
 
 // Dials out, and dials again 5 s after a failure or a drop
 class MainLink {
@@ -233,7 +233,7 @@ private:
     std::thread thread;
 };
 
-// ---- The radio (direwolf) ---------------------------------------------------------
+// The radio (direwolf)
 
 class Radio {
 public:
@@ -491,7 +491,7 @@ private:
 #endif
 };
 
-// ---- The program --------------------------------------------------------------------
+// The program
 
 class Connector {
 public:

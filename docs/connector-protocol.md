@@ -25,8 +25,6 @@ There are two layers:
 - **Air format**: compact text inside each AX.25 frame. It never leaves the connector;
   the main program only ever sees JSON.
 
----
-
 ## 1. Connection
 
 - The connector **dials out** to the main program: `RadioConnector --main 127.0.0.1:9000`.
@@ -252,8 +250,6 @@ so menu settings (sound cards, PTT, baud) carry over, and takes the next SSID as
 callsign, so the two programs are different stations. The connector always uses direwolf,
 whatever the file's `modem` line says. Connector-only keys (path, retry, hold time, main
 address) are in the same format; RadioConnectorCli ignores them.
-
----
 
 ## Decisions
 

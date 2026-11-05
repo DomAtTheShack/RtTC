@@ -1,4 +1,4 @@
-// virtual_audio_pulse.cpp - Linux and macOS: two PulseAudio null sinks. PipeWire's
+// Linux and macOS: two PulseAudio null sinks. PipeWire's
 // PulseAudio server takes the same requests.
 #include "virtual_audio.h"
 

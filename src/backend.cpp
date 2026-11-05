@@ -47,7 +47,7 @@
 
 namespace os {
 
-// ---- Shared ------------------------------------------------------------------
+// Shared
 
 bool portAvailable(int port);   // Per OS, below
 
@@ -89,7 +89,7 @@ int runAndPipe(const std::vector<std::string>& argv,
 }
 
 #ifdef _WIN32
-// ==== Windows =================================================================
+// Windows
 
 namespace {
 
@@ -285,7 +285,7 @@ void Process::interrupt() {
     kill();
 }
 
-// ---- Network (Winsock) ---------------------------------------------------------
+// Network (Winsock)
 
 namespace {
 
@@ -647,7 +647,7 @@ std::string executableDir() {
 }
 
 #else
-// ==== Linux and macOS =========================================================
+// Linux and macOS
 
 namespace {
 
@@ -871,7 +871,7 @@ void Process::interrupt() {
     if (pid != -1) ::kill(pid, SIGINT);
 }
 
-// ---- Network -------------------------------------------------------------------
+// Network
 
 TcpConnection::~TcpConnection() { close(); }
 

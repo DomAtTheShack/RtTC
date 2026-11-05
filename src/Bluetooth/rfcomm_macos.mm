@@ -1,4 +1,4 @@
-// rfcomm_macos.mm - RFCOMM with IOBluetooth, after HTCommander's macOS build
+// RFCOMM with IOBluetooth, after HTCommander's macOS build
 // (AppDelegate.swift). IOBluetooth calls back on the run loop of the thread that opened
 // the channel, so each connection runs its own run loop thread. Pair the radio in System
 // Settings first. Untested on a radio.

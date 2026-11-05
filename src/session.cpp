@@ -1,4 +1,4 @@
-// session.cpp - Keys, program output and received packets all arrive on one event queue.
+// Keys, program output and received packets all arrive on one event queue.
 // Packet sessions keep one direwolf running.
 #include "session.h"
 
@@ -270,7 +270,7 @@ bool runFileTransmit(const std::vector<std::string>& args, const TransmitFormat&
     return transmitTurn(args, events, "Enter: send | Tab: finish | Esc: stop", format) != TurnEnd::Failed;
 }
 
-// ---- Packets (direwolf) ------------------------------------------------------------
+// Packets (direwolf)
 
 namespace {
 
