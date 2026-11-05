@@ -1391,7 +1391,7 @@ public:
         int peerPort = os::freeTcpPort();
         {
             std::ofstream out(workDir / "peer.conf");
-            out << direwolfConfig(peerSettings, direwolfDevice(rx), direwolfDevice(tx), peerPort);
+            out << direwolfConfig(peerSettings, direwolfDevice(rx, false), direwolfDevice(tx, true), peerPort);
         }
         if (!peer.start(direwolfArgs("peer.conf"), workDir.string()))
             return failSetup("couldn't start direwolf: " + peer.error());

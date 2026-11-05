@@ -60,6 +60,8 @@ elseif(APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBPULSE REQUIRED IMPORTED_TARGET libpulse libpulse-simple)
     target_link_libraries(rtc_core PUBLIC PkgConfig::LIBPULSE)
+    # CoreAudio: the default sound card's name, for direwolf's ADEVICE
+    target_link_libraries(rtc_core PUBLIC "-framework CoreAudio" "-framework CoreFoundation")
 else()
     find_package(ALSA REQUIRED)
     target_link_libraries(rtc_core PUBLIC ALSA::ALSA)

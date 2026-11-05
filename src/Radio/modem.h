@@ -9,8 +9,9 @@
 
 const char* packetModemName(int baud);
 
-// Sound card name for ADEVICE. Always "default" on macOS
-std::string direwolfDevice(const std::string& name);
+// Sound card name for ADEVICE. On macOS, always the system default input (or output, if
+// playback) device, by its CoreAudio name
+std::string direwolfDevice(const std::string& name, bool playback);
 
 // AGW and the default KISS port are off so another direwolf doesn't clash. direwolf keys
 // the radio itself, the way settings.ptt says
