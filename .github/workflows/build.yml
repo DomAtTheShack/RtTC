@@ -76,7 +76,7 @@ jobs:
       # The bundled Hamlib folder is in .gitignore, so fetch the same release
       - name: Download Hamlib
         run: |
-          curl -fsSLO "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VERSION}/hamlib-w64-${HAMLIB_VERSION}.zip"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -O "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VERSION}/hamlib-w64-${HAMLIB_VERSION}.zip"
           echo "8553bc6c5c6032e8debf99c017e98f58fed7e07e7c25d04815dc3e8bbe3304c7  hamlib-w64-${HAMLIB_VERSION}.zip" | sha256sum -c
           unzip -q "hamlib-w64-${HAMLIB_VERSION}.zip"
 
@@ -84,7 +84,7 @@ jobs:
       # has no Hamlib). The direwolf folder isn't in the repository, so fetch the release
       - name: Download direwolf source
         run: |
-          curl -fsSL -o direwolf.tar.gz "https://github.com/wb2osz/direwolf/archive/refs/tags/${DIREWOLF_VERSION}.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -o direwolf.tar.gz "https://github.com/wb2osz/direwolf/archive/refs/tags/${DIREWOLF_VERSION}.tar.gz"
           echo "89d5f7992ae1e74d8cf26ec6479dde74d1f480bde950043756e875a689d065d7  direwolf.tar.gz" | sha256sum -c
           mkdir direwolf
           tar xzf direwolf.tar.gz -C direwolf --strip-components=1
@@ -142,7 +142,7 @@ jobs:
       - name: Build Hamlib
         if: steps.hamlib-cache.outputs.cache-hit != 'true'
         run: |
-          curl -fsSLO "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VERSION}/hamlib-${HAMLIB_VERSION}.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -O "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VERSION}/hamlib-${HAMLIB_VERSION}.tar.gz"
           echo "ae1fcf2dbc80ea0786ea8f047b09399c3f7737d1930442f61a031708ed33e88f  hamlib-${HAMLIB_VERSION}.tar.gz" | sha256sum -c
           tar xzf "hamlib-${HAMLIB_VERSION}.tar.gz"
           cd "hamlib-${HAMLIB_VERSION}"
@@ -217,7 +217,7 @@ jobs:
       - name: Build Hamlib
         if: steps.hamlib-cache.outputs.cache-hit != 'true'
         run: |
-          curl -fsSLO "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VERSION}/hamlib-${HAMLIB_VERSION}.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 -O "https://github.com/Hamlib/Hamlib/releases/download/${HAMLIB_VERSION}/hamlib-${HAMLIB_VERSION}.tar.gz"
           echo "ae1fcf2dbc80ea0786ea8f047b09399c3f7737d1930442f61a031708ed33e88f  hamlib-${HAMLIB_VERSION}.tar.gz" | shasum -a 256 -c
           tar xzf "hamlib-${HAMLIB_VERSION}.tar.gz"
           cd "hamlib-${HAMLIB_VERSION}"
