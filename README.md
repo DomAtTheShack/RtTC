@@ -94,6 +94,8 @@ Logs go to stderr.
 
 - [docs/connector-protocol.md](docs/connector-protocol.md): the protocol. JSON between the
   main program and a connector, and the `RC1` air format between connectors.
+- [docs/json-format.md](docs/json-format.md): the JSON format, message by message and field
+  by field, for writing a main program.
 - [docs/ack-guide.md](docs/ack-guide.md): how the acks work, when each is sent, and the code
   that does it.
 - [docs/rc1-test-messages.md](docs/rc1-test-messages.md): `RC1` lines to type in

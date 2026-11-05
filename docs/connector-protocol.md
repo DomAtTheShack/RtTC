@@ -3,7 +3,8 @@
 Status: **built** (`RadioConnector`: `src/Connector/radio_connector.cpp`, `connector.cpp`,
 `connector_config.cpp`). Decisions are listed at the end. See also
 [ack-guide.md](ack-guide.md) (how the acks work, with the code) and
-[rc1-test-messages.md](rc1-test-messages.md) (test messages to type in RadioConnectorCli).
+[rc1-test-messages.md](rc1-test-messages.md) (test messages to type in RadioConnectorCli) and
+[json-format.md](json-format.md) (every JSON message and field, as a reference).
 `RadioTests` checks all of this automatically, over the sound cards too.
 
 The Radio Connector is a headless program that connects one radio (through direwolf,
@@ -63,7 +64,7 @@ Errors, sent as a reply to any request:
 
 **`hello`**, sent right after connecting:
 ```json
-{"v":1,"type":"hello","id":"c-1","body":{
+{"v":1,"type":"hello","id":"c-hello","body":{
   "program":"radio-connector","version":"0.1.0","instance":"N0CALL-7",
   "capabilities":["ax25","fx25"],
   "config":{ ...cached config, see section 5... },
