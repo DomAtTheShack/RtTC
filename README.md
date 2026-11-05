@@ -1,5 +1,9 @@
 ## Radio to Text Connector
 
+> **Archived branch.** This is Radio to Text Connector as it was with minimodem (RTTY and
+> Bell202) alongside direwolf, kept for reference. It is frozen and never merges back into
+> `master`, which is AX.25 (direwolf) only from here on.
+
 Send and receive text over ham radio.
 
 - **minimodem**: RTTY (Baudot) or Bell202, a continuous character stream.
