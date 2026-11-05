@@ -9,6 +9,24 @@
 
 #include "../backend.h"
 
+namespace {
+
+// direwolf's demodulator for each speed, chosen on the simulated FM channels (RadioTests'
+// channel group): 1200 E+ and 9600 + (several slicers) decode 1-2 dB further into the
+// noise than one slicer. Written out, so atest decodes exactly as direwolf does
+const char* demodulator(int baud) {
+    switch (baud) {
+        case 300:  return "AB+";
+        case 9600: return "+";
+        default:   return "E+";
+    }
+}
+
+// Repairs frames with one bad bit, another 1-2 dB. No false frames came out in testing
+const char* const fixBits = "1";
+
+} // namespace
+
 const char* packetModemName(int baud) {
     switch (baud) {
         case 300:  return "AFSK, HF";
@@ -72,7 +90,10 @@ std::string direwolfConfig(const Settings& s, const std::string& rxDevice,
         "ACHANNELS 1\n"
         "CHANNEL 0\n"
         "MYCALL " + call + "\n"
-        "MODEM " + std::to_string(s.packetBaud) + "\n";
+        "MODEM " + std::to_string(s.packetBaud) + " " + demodulator(s.packetBaud) + "\n"
+        // AX25: a repaired frame must have valid addresses. The default (APRS) would drop
+        // repaired frames that aren't APRS, as the connector's aren't
+        "FIX_BITS " + fixBits + " AX25\n";
     // Receiving decodes FX.25 either way
     if (s.fx25 > 0) config += "FX25TX " + std::to_string(s.fx25) + "\n";
     switch (s.ptt) {
@@ -103,7 +124,9 @@ std::vector<std::string> direwolfArgs(const std::string& configPath) {
 }
 
 std::vector<std::string> atestArgs(const Settings& s, const std::string& wavPath) {
-    return {os::atestPath(), "-B", std::to_string(s.packetBaud), "-h", wavPath};
+    // Decodes as direwolfConfig's direwolf would
+    return {os::atestPath(), "-B", std::to_string(s.packetBaud), "-P", demodulator(s.packetBaud),
+            "-F", fixBits, "-h", wavPath};
 }
 
 std::vector<std::string> genPacketsArgs(const Settings& s, const std::string& wavPath) {

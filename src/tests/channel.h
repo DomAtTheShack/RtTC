@@ -1,5 +1,5 @@
-// Simulated radio paths for RadioTests' channel group: narrow FM (VHF/UHF)
-// and SSB (HF), with the radios' own filtering plus noise, mistuning and fading.
+// The simulated radio path for RadioTests' channel group: narrow FM (VHF/UHF),
+// with the radios' own filtering plus noise.
 #ifndef RTC_CHANNEL_H
 #define RTC_CHANNEL_H
 
@@ -25,19 +25,6 @@ struct Nfm {
     uint32_t seed = 1;
 };
 fsk::Audio nfm(const fsk::Audio& audio, const Nfm& radio);
-
-// Audio in, through an SSB transmitter and receiver (300-2700 Hz), with the receiver's
-// AGC levelling the output
-struct Ssb {
-    float snrDb = noNoise;        // Average signal to noise, in the 2400 Hz passband
-    float mistuneHz = 0;          // Receiver off frequency: every tone moves by this
-    // Fading (Watterson model): two equal paths, each wandering with this Doppler spread,
-    // the second delayed. 0 = no fading
-    float dopplerHz = 0;
-    float delayMs = 0;
-    uint32_t seed = 1;
-};
-fsk::Audio ssb(const fsk::Audio& audio, const Ssb& radio);
 
 } // namespace sim
 
