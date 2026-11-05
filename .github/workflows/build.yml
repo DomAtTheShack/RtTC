@@ -2,23 +2,26 @@ name: Build
 
 # Pushes to master and PRs build all three platforms. Other branches build through their
 # PR, so a push to a PR's branch runs once, not twice; a branch without a PR builds with
-# "Run workflow". Every push to master, every night (when there are new commits) and "Run
-# workflow" also publish the builds as the "nightly" GitHub release, replacing the last
-# one. Nothing is published unless all three pass.
+# "Run workflow". Nothing is published automatically: to publish the builds as the
+# "nightly" GitHub release (replacing the last one), use "Run workflow" and tick
+# "Publish the builds as the nightly release". Nothing is published unless all three pass.
 on:
   push:
     branches: [master]
   pull_request:
-  schedule:
-    - cron: "0 7 * * *"          # 07:00 UTC = 3 am Eastern (2 am in winter)
   workflow_dispatch:
+    inputs:
+      release:
+        description: Publish the builds as the nightly release
+        type: boolean
+        default: false
 
 permissions:
   contents: write                # Needed to create the release
 
 concurrency:
   group: build-${{ github.ref }}
-  # A newer push replaces a running PR build, but never cuts a nightly release short
+  # A newer push replaces a running PR build, but never cuts a release short
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -26,34 +29,6 @@ env:
   DIREWOLF_VERSION: "1.8.1"
 
 jobs:
-  # Decides whether this run publishes the nightly. The scheduled run skips it when
-  # nothing was committed since the last one
-  changes:
-    name: Check for new commits
-    runs-on: ubuntu-24.04
-    outputs:
-      release: ${{ steps.check.outputs.release }}
-    steps:
-      - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/master" ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "schedule" ]; then
-            last=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
-            if [ "$last" = "${{ github.sha }}" ]; then
-              echo "No new commits since the last nightly"
-              echo "release=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "release=true" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          fi
-
   windows:
     name: Windows x64
     runs-on: windows-latest
@@ -261,8 +236,9 @@ jobs:
 
   release:
     name: Publish nightly release
-    needs: [changes, windows, linux, macos]
-    if: needs.changes.outputs.release == 'true'
+    needs: [windows, linux, macos]
+    # Only when started by hand with the box ticked
+    if: github.event_name == 'workflow_dispatch' && inputs.release
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
@@ -279,7 +255,7 @@ jobs:
           short=$(echo "${{ github.sha }}" | cut -c1-7)
           today=$(date -u +%Y-%m-%d)
           cat > notes.md <<EOF
-          Automatic build of \`${short}\` from ${today}. Untested; may be broken.
+          Build of \`${short}\` from ${today}. Untested; may be broken.
 
           **Windows:** unzip and run \`RadioConnectorCli.exe\`. Keep the DLLs and the
           direwolf programs next to it (direwolf is included, built with Hamlib).
