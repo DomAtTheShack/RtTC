@@ -1,4 +1,4 @@
-// modem.h - minimodem and direwolf command lines and config.
+// modem.h - direwolf's command lines and config.
 #ifndef RTC_MODEM_H
 #define RTC_MODEM_H
 
@@ -6,18 +6,6 @@
 #include <vector>
 
 #include "../settings.h"
-
-// Shift should be at least the baud rate; twice that is comfortable
-enum class ShiftFit { TooNarrow, Marginal, Comfortable };
-ShiftFit shiftFit(float shift, float baud);
-
-std::string formatNumber(float value);   // %g
-
-// audioArgs pick the sound card or file
-std::vector<std::string> minimodemArgs(const Settings& settings, bool transmit,
-                                       const std::vector<std::string>& audioArgs);
-
-// ---- direwolf ------------------------------------------------------------------
 
 const char* packetModemName(int baud);
 
@@ -32,7 +20,7 @@ std::vector<std::string> direwolfArgs(const std::string& configPath);
 std::vector<std::string> atestArgs(const Settings& settings, const std::string& wavPath);
 std::vector<std::string> genPacketsArgs(const Settings& settings, const std::string& wavPath);
 
-// One-line summary, e.g. "Receive | RTTY 45.45 baud | mark 2125 / space 2295 Hz | squelch 3.5"
+// One-line summary, e.g. "Receive | 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-7"
 std::string describe(const Settings& settings);
 
 #endif //RTC_MODEM_H

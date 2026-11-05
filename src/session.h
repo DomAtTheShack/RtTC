@@ -1,4 +1,5 @@
-// session.h - Receive, transmit and duplex sessions. Each returns on Esc or when done.
+// session.h - Packet sessions (direwolf), and writing packets to a file. Each returns on
+// Esc or when done.
 #ifndef RTC_SESSION_H
 #define RTC_SESSION_H
 
@@ -6,28 +7,17 @@
 #include <string>
 #include <vector>
 
-class Cat;
+// ---- Writing packets to a file (gen_packets) ---------------------------------------
 
-// false if minimodem failed
-bool runReceive(const std::vector<std::string>& rxArgs);
-
-// For feeding a program other than minimodem (gen_packets)
 struct TransmitFormat {
-    const char* name = "minimodem";
+    const char* name = "gen_packets";
     std::function<std::string(const std::string&)> format;   // Typed text -> stdin. Empty = as-is
     bool hideOutput = false;   // Show output only on failure
 };
 
-// Enter sends a line, Tab finishes, Esc stops. text is sent first; with finishAfterText
-// the session ends once it's sent. radio keys PTT over CAT; null = VOX
-bool runTransmit(const std::vector<std::string>& txArgs, Cat* radio,
-                 const std::string& text = "", bool finishAfterText = false,
-                 const TransmitFormat& format = {});
-
-// Alternates Tx and Rx, starting with Tx. Only Tab switches: a dropped carrier is too
-// common on the air to mean the other station has finished
-bool runDuplex(const std::vector<std::string>& txArgs, const std::vector<std::string>& rxArgs,
-               Cat* radio);
+// Feeds typed lines to a program (gen_packets, writing a WAV file). Enter sends a line,
+// Tab finishes, Esc stops. false if it failed
+bool runFileTransmit(const std::vector<std::string>& args, const TransmitFormat& format);
 
 // ---- Packets (direwolf) ----------------------------------------------------------
 

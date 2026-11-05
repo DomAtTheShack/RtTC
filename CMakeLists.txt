@@ -47,7 +47,7 @@ target_link_libraries(rtc_core PUBLIC rtc_sbc)
 # Lets the Test tools menu and RadioTests find tests/audio when run from the build folder
 target_compile_definitions(rtc_core PRIVATE RTC_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src")
 
-# Sessions read the keyboard and minimodem's output on their own threads
+# Sessions read the keyboard and direwolf's output on their own threads
 find_package(Threads REQUIRED)
 target_link_libraries(rtc_core PUBLIC Threads::Threads)
 
@@ -56,9 +56,9 @@ if(WIN32)
     # ws2_32: sockets, for direwolf's KISS port
     target_link_libraries(rtc_core PUBLIC winmm ws2_32)
 elseif(APPLE)
-    # Homebrew's minimodem uses PulseAudio, so the device list comes from there too
+    # PulseAudio (Homebrew's): the device list, and playing the tuning tone
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(LIBPULSE REQUIRED IMPORTED_TARGET libpulse)
+    pkg_check_modules(LIBPULSE REQUIRED IMPORTED_TARGET libpulse libpulse-simple)
     target_link_libraries(rtc_core PUBLIC PkgConfig::LIBPULSE)
 else()
     find_package(ALSA REQUIRED)

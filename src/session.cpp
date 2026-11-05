@@ -1,5 +1,5 @@
-// session.cpp - Keys, modem output and received packets all arrive on one event queue.
-// Each minimodem turn runs its own process; packet sessions keep one direwolf running.
+// session.cpp - Keys, program output and received packets all arrive on one event queue.
+// Packet sessions keep one direwolf running.
 #include "session.h"
 
 #include <atomic>
@@ -15,7 +15,6 @@
 
 #include "ansi.hpp"
 #include "backend.h"
-#include "Radio/cat.h"
 #include "Connector/packet.h"
 
 namespace {
@@ -188,23 +187,11 @@ private:
 
 enum class TurnEnd { Next, Quit, Failed };
 
-TurnEnd transmitTurn(const std::vector<std::string>& args, Cat* radio, EventQueue& events,
-                     const char* help, const std::string& text = "", bool finishAfterText = false,
-                     const TransmitFormat& format = {}) {
+TurnEnd transmitTurn(const std::vector<std::string>& args, EventQueue& events, const char* help,
+                     const TransmitFormat& format) {
     ansi::print(statusColor, ansi::Bold, "\n== TX ==");
     ansi::print(statusColor, "  %s\n", help);
     ansi::flush();
-
-    // Before the modem, so the modem stops before the radio unkeys
-    std::optional<PttGuard> keyed;
-    if (radio) {
-        try {
-            keyed.emplace(*radio);
-        } catch (const std::exception& e) {
-            ansi::print(errorColor, "Cannot key the radio: %s\n", e.what());
-            return TurnEnd::Failed;
-        }
-    }
 
     Modem modem(events);
     if (!modem.start(args, true)) return TurnEnd::Failed;
@@ -221,20 +208,12 @@ TurnEnd transmitTurn(const std::vector<std::string>& args, Cat* radio, EventQueu
         line.clear();
         std::fputs("\n", stdout);
     };
-    if (!text.empty()) {
-        modem.process.write(toProgram(text));
-        printColored(sentColor, text);
-    }
-    if (finishAfterText) {
-        modem.process.closeStdin();
-        finishing = true;
-    }
 
     for (;;) {
         Event event = events.pop();
         if (event.type == Event::Type::OutputEnded) break;
         if (event.type == Event::Type::Output) {
-            // minimodem prints nothing while sending, so output means a problem
+            // Nothing is printed while it works, so output means a problem
             if (format.hideOutput) output += event.text;
             else printColored(errorColor, event.text);
             continue;
@@ -262,7 +241,7 @@ TurnEnd transmitTurn(const std::vector<std::string>& args, Cat* radio, EventQueu
                 break;
             case Key::Tab:
                 if (!line.empty()) sendLine();
-                modem.process.closeStdin();   // minimodem sends what's queued, then exits
+                modem.process.closeStdin();   // It writes what's queued, then exits
                 finishing = true;
                 ansi::print(statusColor, "\n(finishing...)\n");
                 break;
@@ -274,17 +253,6 @@ TurnEnd transmitTurn(const std::vector<std::string>& args, Cat* radio, EventQueu
         ansi::flush();
     }
     int status = modem.wait();
-
-    // PttGuard swallows errors; this one must be seen
-    if (radio) {
-        try {
-            radio->setPtt(false);
-        } catch (const std::exception& e) {
-            ansi::print(errorColor, "Cannot unkey the radio (%s). Check it isn't transmitting!\n",
-                        e.what());
-            return TurnEnd::Failed;
-        }
-    }
     if (quitting) return TurnEnd::Quit;
     if (!finishing || status != 0) {
         if (!output.empty()) printColored(errorColor, output);
@@ -294,76 +262,12 @@ TurnEnd transmitTurn(const std::vector<std::string>& args, Cat* radio, EventQueu
     return TurnEnd::Next;
 }
 
-// Next = minimodem stopped by itself (end of file), or Tab when allowTab
-TurnEnd receiveTurn(const std::vector<std::string>& args, EventQueue& events, const char* help,
-                    bool allowTab, const char* endedMessage) {
-    ansi::print(statusColor, ansi::Bold, "\n== RX ==");
-    ansi::print(statusColor, "  %s\n", help);
-    ansi::flush();
-
-    Modem modem(events);
-    if (!modem.start(args, false)) return TurnEnd::Failed;
-
-    bool stopping = false;    // Tab pressed
-    bool quitting = false;
-    for (;;) {
-        Event event = events.pop();
-        if (event.type == Event::Type::OutputEnded) break;
-        if (event.type == Event::Type::Output) {
-            printColored(receivedColor, event.text);
-            continue;
-        }
-        if (stopping || quitting) continue;
-        if (event.key == Key::Tab && allowTab) {
-            modem.process.kill();
-            stopping = true;
-        } else if (event.key == Key::Esc) {
-            modem.process.kill();
-            quitting = true;
-        }
-    }
-    int status = modem.wait();
-
-    if (quitting) return TurnEnd::Quit;
-    if (stopping) return TurnEnd::Next;
-    if (status != 0) {
-        ansi::print(errorColor, "\nminimodem stopped unexpectedly (exit %d)\n", status);
-        return TurnEnd::Failed;
-    }
-    ansi::print(statusColor, "\n%s\n", endedMessage);
-    return TurnEnd::Next;
-}
-
 } // namespace
 
-bool runReceive(const std::vector<std::string>& rxArgs) {
+bool runFileTransmit(const std::vector<std::string>& args, const TransmitFormat& format) {
     EventQueue events;
     KeyReader keys(events);
-    TurnEnd end = receiveTurn(rxArgs, events, "Esc: stop", false, "(end of input)");
-    return end != TurnEnd::Failed;
-}
-
-bool runTransmit(const std::vector<std::string>& txArgs, Cat* radio, const std::string& text,
-                 bool finishAfterText, const TransmitFormat& format) {
-    EventQueue events;
-    KeyReader keys(events);
-    const char* help = finishAfterText ? "Esc: stop"
-                                       : "Enter: send | Tab: finish | Esc: stop";
-    TurnEnd end = transmitTurn(txArgs, radio, events, help, text, finishAfterText, format);
-    return end != TurnEnd::Failed;
-}
-
-bool runDuplex(const std::vector<std::string>& txArgs, const std::vector<std::string>& rxArgs,
-               Cat* radio) {
-    EventQueue events;
-    KeyReader keys(events);
-    TurnEnd end = TurnEnd::Next;
-    for (bool transmitting = true; end == TurnEnd::Next; transmitting = !transmitting) {
-        end = transmitting
-            ? transmitTurn(txArgs, radio, events, "Enter: send | Tab: receive | Esc: stop")
-            : receiveTurn(rxArgs, events, "Tab: transmit | Esc: stop", true, "(receiver stopped)");
-    }
-    return end == TurnEnd::Quit;
+    return transmitTurn(args, events, "Enter: send | Tab: finish | Esc: stop", format) != TurnEnd::Failed;
 }
 
 // ---- Packets (direwolf) ------------------------------------------------------------

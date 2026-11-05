@@ -2,8 +2,8 @@
 
 Radios built on Benshi's Bluetooth design carry audio over Bluetooth as well as
 control: BTech UV-Pro and UV-50Pro, Radioddity GA-5WB and DB50-B Mini, Vero VR-N75,
-VR-N76, VR-N7500 and VR-N7600. With **Bluetooth radio** set, minimodem and direwolf use
-that instead of a sound card and cable, for every mode: RTTY, Bell202 and packet.
+VR-N76, VR-N7500 and VR-N7600. With **Bluetooth radio** set, direwolf uses that instead
+of a sound card and cable, at every packet speed, and so does the tuning tone.
 
 The protocol comes from [HTCommander](https://github.com/Ylianst/HTCommander) (Apache
 2.0), whose Linux, Windows and macOS builds do Bluetooth audio, and
@@ -52,16 +52,16 @@ WinRT.
 
 ### macOS
 
-Like Linux, through Homebrew's PulseAudio (`brew services start pulseaudio`), for
-minimodem. direwolf on macOS only uses the system's default sound card, so packet isn't
-available over Bluetooth there. Untested on a radio: the Bluetooth code follows
-HTCommander's macOS build.
+Not available yet. The code is there (it follows HTCommander's macOS build, through
+Homebrew's PulseAudio), but direwolf on macOS only uses the system's default sound card,
+so it can't reach the bridge's, and the Bluetooth setting is hidden. (The minimodem
+version on the `archive/minimodem` branch could use it.)
 
 ## How it works
 
 ```
- minimodem / direwolf                bridge (src/Bluetooth)                     radio
- ───────────────────                 ──────────────────────                     ─────
+ direwolf                            bridge (src/Bluetooth)                     radio
+ ────────                            ──────────────────────                     ─────
  records rtc_bt_rx.monitor  <──  plays decoded audio  <── SBC decode <── audio channel
  plays into rtc_bt_tx       ──>  records its monitor  ──> key on sound,
                                                           SBC encode    ──> audio channel
@@ -79,7 +79,7 @@ HTCommander's macOS build.
 - **Transmitting**: the modems play into `rtc_bt_tx`, which is digital silence (zeros)
   between transmissions. A sample over 64 (of 32767) starts a transmission; 300 ms of
   quiet ends it with the end frame, so the radio stays keyed through direwolf's and
-  minimodem's own gaps. The first 250 ms are buffered before anything is sent, so a
+  the tuning tone's own gaps. The first 250 ms are buffered before anything is sent, so a
   Bluetooth hiccup can't starve the radio part way through a packet. The 300 ms of quiet
   at the end goes out too, like a short TXTAIL.
 - **Stopping** always ends any transmission with the end frame.
@@ -127,7 +127,8 @@ notification), 9 (event notification), 20 (HT status). An HT status notification
 
 - RadioTests' unit tests: framing, GAIA, SBC (round trip about 60 dB SNR, and the header
   the radio needs), transmit keying and settings.
-- On a Linux PC, without a radio: minimodem RTTY and direwolf packets through the virtual
+- On a Linux PC, without a radio: direwolf packets (and, before it was archived, minimodem
+  RTTY) through the virtual
   sound cards, the transmit keying, the SBC encoding and back. Text and packets came
   through whole, one transmission each, ended with the end frame. Our SBC also decodes
   with BlueZ's libsbc.

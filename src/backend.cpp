@@ -29,6 +29,7 @@
     #ifdef __APPLE__
         #include <mach-o/dyld.h>
         #include <pulse/pulseaudio.h>
+        #include <pulse/simple.h>
     #else
         #include <alsa/asoundlib.h>
     #endif
@@ -455,6 +456,38 @@ std::vector<AudioDevice> listAudioDevices(AudioDirection direction) {
     return devices;
 }
 
+std::string playTone(const std::string& device, const std::vector<int16_t>& second, int rate,
+                     const std::function<bool()>& keepGoing) {
+    if (device.empty() || device.find_first_not_of("0123456789") != std::string::npos)
+        return "\"" + device + "\" isn't a Windows sound card number";
+    WAVEFORMATEX format{};
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = 1;
+    format.nSamplesPerSec = static_cast<DWORD>(rate);
+    format.wBitsPerSample = 16;
+    format.nBlockAlign = 2;
+    format.nAvgBytesPerSec = static_cast<DWORD>(rate) * 2;
+    HWAVEOUT out = nullptr;
+    if (waveOutOpen(&out, static_cast<UINT>(std::stoul(device)), &format, 0, 0, CALLBACK_NULL) !=
+        MMSYSERR_NOERROR)
+        return "can't open sound card " + device;
+    // One buffer, looped by the driver until reset
+    std::vector<int16_t> samples = second;
+    WAVEHDR header{};
+    header.lpData = reinterpret_cast<LPSTR>(samples.data());
+    header.dwBufferLength = static_cast<DWORD>(samples.size() * sizeof(int16_t));
+    header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
+    header.dwLoops = 0xFFFFFFFF;
+    waveOutPrepareHeader(out, &header, sizeof header);
+    std::string error;
+    if (waveOutWrite(out, &header, sizeof header) != MMSYSERR_NOERROR) error = "can't play on sound card " + device;
+    while (error.empty() && keepGoing()) Sleep(50);
+    waveOutReset(out);
+    waveOutUnprepareHeader(out, &header, sizeof header);
+    waveOutClose(out);
+    return error;
+}
+
 bool fileExists(const std::string& path) {
     return GetFileAttributesW(widen(path).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
@@ -561,173 +594,7 @@ bool isFile(const std::wstring& path) {
     return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-// Puts Cygwin's bin (for cygwin1.dll) on PATH when minimodem is under a Cygwin install
-void addCygwinDllToPath(const std::wstring& exePath) {
-    for (const wchar_t* suffix : {L"\\usr\\local\\bin\\minimodem.exe", L"\\bin\\minimodem.exe"}) {
-        std::wstring tail = suffix;
-        if (exePath.size() <= tail.size() ||
-            _wcsicmp(exePath.c_str() + exePath.size() - tail.size(), tail.c_str()) != 0) continue;
-        std::wstring binDir = exePath.substr(0, exePath.size() - tail.size()) + L"\\bin";
-        if (!isFile(binDir + L"\\cygwin1.dll")) return;
-        DWORD len = GetEnvironmentVariableW(L"PATH", nullptr, 0);
-        std::wstring path(len, L'\0');
-        GetEnvironmentVariableW(L"PATH", path.data(), len);
-        path.resize(len ? len - 1 : 0);
-        SetEnvironmentVariableW(L"PATH", (binDir + L";" + path).c_str());
-        return;
-    }
-}
-
-// PATH, then the usual Cygwin folders
-std::string findMinimodem() {
-    wchar_t found[MAX_PATH];
-    std::wstring exe;
-    if (SearchPathW(nullptr, L"minimodem.exe", nullptr, MAX_PATH, found, nullptr) > 0) {
-        exe = found;
-    } else {
-        for (const wchar_t* candidate : {L"C:\\cygwin64\\usr\\local\\bin\\minimodem.exe",
-                                         L"C:\\cygwin64\\bin\\minimodem.exe",
-                                         L"C:\\cygwin\\usr\\local\\bin\\minimodem.exe",
-                                         L"C:\\cygwin\\bin\\minimodem.exe"}) {
-            if (isFile(candidate)) { exe = candidate; break; }
-        }
-    }
-    if (exe.empty()) return "minimodem.exe";
-    addCygwinDllToPath(exe);
-    return narrow(exe.c_str());
-}
-
 } // namespace
-
-const char* minimodemPath() {
-    static const std::string path = findMinimodem();
-    return path.c_str();
-}
-
-namespace {
-
-// Our own PulseAudio for minimodem, open on the chosen sound cards
-struct MinimodemPulse {
-    std::string playback, capture;   // WinMM device numbers, "" = not opened
-    HANDLE process = nullptr;
-    HANDLE job     = nullptr;        // Kills PulseAudio when we exit, even on a crash
-};
-MinimodemPulse pulse;
-
-// Cygwin's bin folder (where minimodem's DLLs are), then PATH
-std::wstring findPulseaudio() {
-    std::wstring exe = widen(minimodemPath());
-    size_t slash = exe.find_last_of(L"\\/");
-    if (slash != std::wstring::npos) {
-        std::wstring dir = exe.substr(0, slash);
-        const std::wstring local = L"\\usr\\local\\bin";
-        if (dir.size() > local.size() &&
-            _wcsicmp(dir.c_str() + dir.size() - local.size(), local.c_str()) == 0)
-            dir = dir.substr(0, dir.size() - local.size()) + L"\\bin";
-        if (isFile(dir + L"\\pulseaudio.exe")) return dir + L"\\pulseaudio.exe";
-    }
-    wchar_t found[MAX_PATH];
-    if (SearchPathW(nullptr, L"pulseaudio.exe", nullptr, MAX_PATH, found, nullptr) > 0) return found;
-    return L"";
-}
-
-void stopPulse() {
-    if (!pulse.process) return;
-    TerminateProcess(pulse.process, 0);
-    WaitForSingleObject(pulse.process, 2000);
-    CloseHandle(pulse.process);
-    pulse.process = nullptr;
-    pulse.playback.clear();
-    pulse.capture.clear();
-    SetEnvironmentVariableW(L"PULSE_SERVER", nullptr);
-    SetEnvironmentVariableW(L"PULSE_SINK", nullptr);
-    SetEnvironmentVariableW(L"PULSE_SOURCE", nullptr);
-}
-
-// "" once it's listening, else what went wrong
-std::string startPulse(const std::string& playback, const std::string& capture) {
-    std::wstring exe = findPulseaudio();
-    if (exe.empty()) return "pulseaudio.exe wasn't found next to minimodem. Install Cygwin's pulseaudio package.";
-    int port = freeTcpPort();
-    if (port == 0) return "No free TCP port for PulseAudio.";
-
-    // -n: none of the default config, which opens the Windows default device
-    std::vector<std::wstring> args = {
-        exe, L"-n", L"--daemonize=no", L"--exit-idle-time=-1", L"--use-pid-file=no",
-        L"-L", L"module-native-protocol-tcp listen=127.0.0.1 auth-anonymous=1 port=" + std::to_wstring(port)};
-    if (!playback.empty()) {
-        args.push_back(L"-L");
-        args.push_back(L"module-waveout sink_name=rtc_tx record=0 output_device=" + widen(playback));
-    }
-    if (!capture.empty()) {
-        args.push_back(L"-L");
-        args.push_back(L"module-waveout source_name=rtc_rx playback=0 input_device=" + widen(capture));
-    }
-    std::wstring cmdLine;
-    for (const std::wstring& arg : args) {
-        if (!cmdLine.empty()) cmdLine += L' ';
-        appendQuoted(cmdLine, arg);
-    }
-
-    // Its log would land on our screen
-    SECURITY_ATTRIBUTES sa{sizeof sa, nullptr, TRUE};
-    HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                             &sa, OPEN_EXISTING, 0, nullptr);
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = si.hStdOutput = si.hStdError = nul;
-    PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessW(exe.c_str(), cmdLine.data(), nullptr, nullptr, TRUE,
-                             CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
-    std::string error = ok ? "" : lastErrorMessage("pulseaudio");
-    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
-    if (!ok) return error;
-
-    if (!pulse.job) {
-        pulse.job = CreateJobObjectW(nullptr, nullptr);
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (pulse.job) SetInformationJobObject(pulse.job, JobObjectExtendedLimitInformation, &limits, sizeof limits);
-    }
-    if (pulse.job) AssignProcessToJobObject(pulse.job, pi.hProcess);
-    ResumeThread(pi.hThread);
-    CloseHandle(pi.hThread);
-    pulse.process = pi.hProcess;
-
-    // Takes a second or two. It quits if it can't open a sound card
-    for (int waited = 0; waited < 8000; waited += 100) {
-        if (WaitForSingleObject(pulse.process, 100) == WAIT_OBJECT_0) {
-            stopPulse();
-            return "PulseAudio couldn't open that sound card.";
-        }
-        TcpConnection probe;
-        if (probe.connect("127.0.0.1", port)) {
-            probe.close();
-            pulse.playback = playback;
-            pulse.capture = capture;
-            SetEnvironmentVariableW(L"PULSE_SERVER", (L"tcp:127.0.0.1:" + std::to_wstring(port)).c_str());
-            SetEnvironmentVariableW(L"PULSE_SINK", playback.empty() ? nullptr : L"rtc_tx");
-            SetEnvironmentVariableW(L"PULSE_SOURCE", capture.empty() ? nullptr : L"rtc_rx");
-            return "";
-        }
-    }
-    stopPulse();
-    return "PulseAudio didn't start.";
-}
-
-} // namespace
-
-std::string useMinimodemDevice(const std::string& device, AudioDirection direction) {
-    if (device.empty() || device.find_first_not_of("0123456789") != std::string::npos)
-        return "\"" + device + "\" isn't a Windows sound card number.";
-    std::string playback = pulse.playback, capture = pulse.capture;
-    (direction == AudioDirection::Playback ? playback : capture) = device;
-    bool running = pulse.process && WaitForSingleObject(pulse.process, 0) == WAIT_TIMEOUT;
-    if (running && playback == pulse.playback && capture == pulse.capture) return "";
-    stopPulse();
-    return startPulse(playback, capture);
-}
 
 namespace {
 
@@ -1193,6 +1060,31 @@ std::vector<AudioDevice> listAudioDevices(AudioDirection direction) {
     pa_mainloop_free(loop);
     return devices;
 }
+
+std::string playTone(const std::string& device, const std::vector<int16_t>& second, int rate,
+                     const std::function<bool()>& keepGoing) {
+    pa_sample_spec spec{PA_SAMPLE_S16LE, static_cast<uint32_t>(rate), 1};
+    int err = 0;
+    pa_simple* out = pa_simple_new(nullptr, "Radio to Text Connector", PA_STREAM_PLAYBACK,
+                                   device.empty() ? nullptr : device.c_str(), "Tuning tone", &spec,
+                                   nullptr, nullptr, &err);
+    if (!out) return std::string("can't play on ") + (device.empty() ? "the default sound card" : device) +
+                     ": " + pa_strerror(err);
+    // A tenth of a second at a time, so stopping is quick
+    size_t chunk = static_cast<size_t>(rate) / 10, pos = 0;
+    std::string error;
+    while (keepGoing()) {
+        size_t n = std::min(chunk, second.size() - pos);
+        if (pa_simple_write(out, second.data() + pos, n * sizeof(int16_t), &err) < 0) {
+            error = pa_strerror(err);
+            break;
+        }
+        pos = (pos + n) % second.size();
+    }
+    pa_simple_flush(out, &err);
+    pa_simple_free(out);
+    return error;
+}
 #else
 std::vector<AudioDevice> listAudioDevices(AudioDirection direction) {
     std::vector<AudioDevice> devices;
@@ -1224,6 +1116,35 @@ std::vector<AudioDevice> listAudioDevices(AudioDirection direction) {
 
     snd_device_name_free_hint(hints);
     return devices;
+}
+
+std::string playTone(const std::string& device, const std::vector<int16_t>& second, int rate,
+                     const std::function<bool()>& keepGoing) {
+    // A bare card name goes through plug, which converts the rate
+    std::string name = device.empty() ? "default" : device;
+    if (name.find(':') == std::string::npos && name != "default") name = "plug:" + name;
+    snd_pcm_t* pcm = nullptr;
+    if (int err = snd_pcm_open(&pcm, name.c_str(), SND_PCM_STREAM_PLAYBACK, 0); err < 0)
+        return "can't open " + name + ": " + snd_strerror(err);
+    std::string error;
+    if (int err = snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 1,
+                                     static_cast<unsigned>(rate), 1, 100000); err < 0)
+        error = std::string("can't set up ") + name + ": " + snd_strerror(err);
+    // A tenth of a second at a time, so stopping is quick
+    size_t chunk = static_cast<size_t>(rate) / 10, pos = 0;
+    while (error.empty() && keepGoing()) {
+        size_t n = std::min(chunk, second.size() - pos);
+        snd_pcm_sframes_t written = snd_pcm_writei(pcm, second.data() + pos, n);
+        if (written < 0) written = snd_pcm_recover(pcm, static_cast<int>(written), 1);
+        if (written < 0) {
+            error = snd_strerror(static_cast<int>(written));
+            break;
+        }
+        pos = (pos + static_cast<size_t>(written)) % second.size();
+    }
+    snd_pcm_drop(pcm);
+    snd_pcm_close(pcm);
+    return error;
 }
 #endif
 
@@ -1323,11 +1244,6 @@ std::string programPath(const std::string& name) {
 }
 
 } // namespace
-
-const char* minimodemPath() {
-    static const std::string path = programPath("minimodem");
-    return path.c_str();
-}
 
 const char* direwolfPath() {
     static const std::string path = programPath("direwolf");

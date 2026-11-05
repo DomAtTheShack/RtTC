@@ -2,6 +2,7 @@
 #ifndef RTC_BACKEND_H
 #define RTC_BACKEND_H
 
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -110,12 +111,12 @@ struct AudioDevice {
 
 std::vector<AudioDevice> listAudioDevices(AudioDirection direction);
 
-#ifdef _WIN32
-// Cygwin minimodem plays and records through PulseAudio, which normally uses the Windows
-// default device. This runs our own PulseAudio on WinMM device `device` (plus the other
-// direction's, if set before) and points minimodem at it. "" on success, else the problem
-std::string useMinimodemDevice(const std::string& device, AudioDirection direction);
-#endif
+// Plays one second of 16-bit mono audio over and over on a playback device (a name from
+// listAudioDevices; macOS and Linux: "" = the default) until keepGoing() is false. Make
+// it whole cycles so the joins are seamless. "" when done, else the problem
+std::string playTone(const std::string& device, const std::vector<int16_t>& second, int rate,
+                     const std::function<bool()>& keepGoing);
+
 
 // ---- Serial ports ------------------------------------------------------------
 
@@ -141,7 +142,6 @@ TerminalSize terminalSize();          // 24x80 if unknown
 
 // ---- Programs ----------------------------------------------------------------
 
-const char* minimodemPath();
 const char* direwolfPath();
 const char* atestPath();
 const char* genPacketsPath();

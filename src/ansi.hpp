@@ -326,7 +326,7 @@ int select(const std::string& title, const Container& options, int initial = 0,
                       [&](int i) { return std::begin(options)[i]; }, initial, subtitle);
 }
 
-// Inline list: ansi::select("Mode", {"RTTY", "Bell 103", "Bell 202"})
+// Inline list: ansi::select("Mode", {"Receive", "Transmit", "Duplex"})
 inline int select(const std::string& title, std::initializer_list<const char*> options,
                   int initial = 0, const std::string& subtitle = "") {
     return selectWith(title, static_cast<int>(options.size()),
