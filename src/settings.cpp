@@ -33,27 +33,44 @@ bool toInt(const std::string& s, int low, int high, int& out) {
     return true;
 }
 
-std::string number(float value) {
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%g", value);
-    return buf;
-}
+// Where the folder goes, and its name now and before the program was RtTC
+struct ConfigLocation {
+    fs::path base;
+    const char* name;
+    const char* oldName;
+};
 
-fs::path configDir() {
+ConfigLocation configLocation() {
 #ifdef _WIN32
-    if (const wchar_t* appData = _wgetenv(L"APPDATA")) return fs::path(appData) / "RTTY-Connector";
-    return fs::path("RTTY-Connector");
+    const wchar_t* appData = _wgetenv(L"APPDATA");
+    return {appData ? fs::path(appData) : fs::path("."), "RtTC", "RTTY-Connector"};
 #else
     const char* home = std::getenv("HOME");
     fs::path base = home ? fs::path(home) : fs::path(".");
   #ifdef __APPLE__
-    return base / "Library" / "Application Support" / "RTTY-Connector";
+    return {base / "Library" / "Application Support", "RtTC", "RTTY-Connector"};
   #else
-    if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg)
-        return fs::path(xdg) / "rtty-connector";
-    return base / ".config" / "rtty-connector";
+    if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) base = fs::path(xdg);
+    else base /= ".config";
+    return {base, "rttc", "rtty-connector"};
   #endif
 #endif
+}
+
+fs::path configDir() {
+    static const fs::path dir = [] {
+        ConfigLocation where = configLocation();
+        fs::path now = where.base / where.name, before = where.base / where.oldName;
+        // First run since the rename: copy (not move), so an older build still finds its files
+        std::error_code ec;
+        if (!fs::exists(now, ec) && fs::is_directory(before, ec)) {
+            fs::create_directories(now, ec);
+            for (const char* file : {"settings.ini", "connector.ini"})
+                if (fs::exists(before / file, ec)) fs::copy_file(before / file, now / file, ec);
+        }
+        return now;
+    }();
+    return dir;
 }
 
 } // namespace
@@ -65,14 +82,6 @@ const char* operationName(Operation operation) {
         case Operation::Duplex:   return "Duplex";
     }
     return "?";
-}
-
-const char* engineName(Engine engine) {
-    return engine == Engine::Minimodem ? "minimodem" : "direwolf";
-}
-
-const char* protocolName(Protocol protocol) {
-    return protocol == Protocol::Rtty ? "RTTY" : "Bell202 1200 bps";
 }
 
 std::string fx25Name(int fx25) {
@@ -102,7 +111,9 @@ bool parsePttKey(const std::string& text, PttType& ptt) {
 }
 
 bool bluetoothBuiltIn() {
-#ifdef RTC_BLUETOOTH
+    // macOS has the code, but direwolf there only uses the default sound card, so nothing
+    // can use the bridge's
+#if defined(RTC_BLUETOOTH) && !defined(__APPLE__)
     return true;
 #else
     return false;
@@ -140,12 +151,6 @@ std::string formatSettings(const Settings& s) {
     out << "# Radio to Text Connector settings\n";
     out << "operation=" << (s.operation == Operation::Receive  ? "receive"
                           : s.operation == Operation::Transmit ? "transmit" : "duplex") << "\n";
-    out << "modem=" << engineName(s.engine) << "\n";
-    out << "protocol=" << (s.protocol == Protocol::Rtty ? "rtty" : "bell202") << "\n";
-    out << "baud=" << number(s.baud) << "\n";
-    out << "centre=" << number(s.centre) << "\n";
-    out << "shift=" << number(s.shift) << "\n";
-    out << "squelch=" << number(s.squelch) << "\n";
     out << "packet_baud=" << s.packetBaud << "\n";
     out << "fx25=" << (s.fx25 <= 0 ? std::string("off") : s.fx25 == 1 ? std::string("auto")
                                                                          : std::to_string(s.fx25)) << "\n";
@@ -160,7 +165,6 @@ std::string formatSettings(const Settings& s) {
     out << "ptt=" << pttKey(s.ptt) << "\n";
     out << "ptt_port=" << s.pttPort << "\n";
     out << "audio_file=" << s.audioFile << "\n";
-    out << "quiet=" << (s.quiet ? "1" : "0") << "\n";
     out << "bluetooth=" << s.bluetooth << "\n";
     out << "bluetooth_name=" << s.bluetoothName << "\n";
     out << "bt_play_audio=" << s.btPlayAudio << "\n";
@@ -192,16 +196,9 @@ Settings parseSettings(const std::string& text) {
             if (value == "receive")  s.operation = Operation::Receive;
             if (value == "transmit") s.operation = Operation::Transmit;
             if (value == "duplex")   s.operation = Operation::Duplex;
-        } else if (key == "modem") {
-            if (value == "minimodem") s.engine = Engine::Minimodem;
-            if (value == "direwolf")  s.engine = Engine::Direwolf;
-        } else if (key == "protocol") {
-            if (value == "rtty")    s.protocol = Protocol::Rtty;
-            if (value == "bell202") s.protocol = Protocol::Bell202;
-        } else if (key == "baud")       toFloat(value, s.baud);
-        else if (key == "centre")       toFloat(value, s.centre);
-        else if (key == "shift")        toFloat(value, s.shift);
-        else if (key == "squelch")      toFloat(value, s.squelch);
+        }
+        // modem, protocol, baud, centre, shift, squelch and quiet were minimodem's. Files
+        // from then still load; those lines are ignored
         else if (key == "packet_baud") {
             float baud;
             if (toFloat(value, baud) && (baud == 300 || baud == 1200 || baud == 9600))
@@ -229,7 +226,6 @@ Settings parseSettings(const std::string& text) {
         else if (key == "ptt")          pttGiven = parsePttKey(value, s.ptt);
         else if (key == "ptt_port")     s.pttPort = value;
         else if (key == "audio_file")   s.audioFile = value;
-        else if (key == "quiet")        s.quiet = value == "1" || value == "true";
         else if (key == "bluetooth")    s.bluetooth = value;
         else if (key == "bluetooth_name") s.bluetoothName = value;
         else if (key == "bt_play_audio")  s.btPlayAudio = value;

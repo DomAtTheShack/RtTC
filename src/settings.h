@@ -6,8 +6,6 @@
 #include <vector>
 
 enum class Operation { Receive, Transmit, Duplex };
-enum class Engine { Minimodem, Direwolf };
-enum class Protocol { Rtty, Bell202 };
 // How the transmitter is keyed: VOX, a CAT command, or the RTS/DTR line of a serial port
 // (which can be a second port, e.g. the FTDX3000's Standard port)
 enum class PttType { Vox, Cat, Rts, Dtr };
@@ -19,16 +17,10 @@ constexpr int ownRigctldModel = 2;
 
 struct Settings {
     Operation operation = Operation::Receive;
-    Engine    engine    = Engine::Minimodem;
-    Protocol  protocol  = Protocol::Rtty;      // minimodem only
-    float baud    = 45.45f;    // RTTY only; Bell202 is always 1200
-    float centre  = 2210.0f;   // Hz, RTTY only
-    float shift   = 170.0f;    // Hz, RTTY only
-    float squelch = 3.5f;      // minimodem -c, receiving only
-    int packetBaud = 1200;     // direwolf: 300, 1200 or 9600
-    int fx25 = 1;              // direwolf FX.25 transmit: 0 off, 1 auto, 16/32/64 check
-                               // bytes. Receiving always decodes FX.25
-    std::string callsign;      // direwolf
+    int packetBaud = 1200;     // 300, 1200 or 9600
+    int fx25 = 1;              // FX.25 transmit: 0 off, 1 auto, 16/32/64 check bytes.
+                               // Receiving always decodes FX.25
+    std::string callsign;
     std::string rxAudio;       // AudioDevice::name; empty = ask
     std::string txAudio;
     std::string rxAudioDesc;
@@ -48,7 +40,6 @@ struct Settings {
     std::string bluetoothName;
     std::string btPlayAudio;
     std::string btRecordAudio;
-    bool quiet = false;        // minimodem -q
 
     // Radio Connector only; RadioConnectorCli keeps them but doesn't use them
     std::vector<std::string> path;   // Digipeaters, e.g. WIDE1-1
@@ -60,11 +51,6 @@ struct Settings {
     // Interactive program only: who typed packets go to. Empty = CQ
     std::string sendTo;
 
-    // Mark is the lower tone
-    float markHz()  const { return centre - shift / 2.0f; }
-    float spaceHz() const { return centre + shift / 2.0f; }
-    bool rtty()      const { return engine == Engine::Minimodem && protocol == Protocol::Rtty; }
-    bool packet()    const { return engine == Engine::Direwolf; }
     bool transmits() const { return operation != Operation::Receive; }
     bool receives()  const { return operation != Operation::Transmit; }
     bool hasCat()    const { return !catPort.empty(); }
@@ -86,9 +72,11 @@ std::string pttProblem(const Settings& settings);
 std::string formatSettings(const Settings& settings);
 Settings parseSettings(const std::string& text);
 
-//   Windows  %APPDATA%\RTTY-Connector\settings.ini
-//   macOS    ~/Library/Application Support/RTTY-Connector/settings.ini
-//   Linux    $XDG_CONFIG_HOME/rtty-connector/settings.ini (~/.config by default)
+//   Windows  %APPDATA%\RtTC\settings.ini
+//   macOS    ~/Library/Application Support/RtTC/settings.ini
+//   Linux    $XDG_CONFIG_HOME/rttc/settings.ini (~/.config by default)
+// The first time, the files from the old folder (RTTY-Connector, rtty-connector on Linux)
+// are copied in
 std::string settingsPath();
 Settings loadSettings();
 bool saveSettings(const Settings& settings);
@@ -101,8 +89,6 @@ Settings loadSettingsFrom(const std::string& path, bool* found = nullptr);
 bool saveSettingsTo(const Settings& settings, const std::string& path);
 
 const char* operationName(Operation operation);
-const char* engineName(Engine engine);
-const char* protocolName(Protocol protocol);
 // "Off", "Auto", "16 check bytes", ...
 std::string fx25Name(int fx25);
 // "vox", "cat", "rts", "dtr": the settings file and the connector's JSON

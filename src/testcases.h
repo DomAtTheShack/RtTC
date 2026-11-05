@@ -51,13 +51,12 @@ struct CaseResult {
 };
 
 CaseResult runCase(const AudioCase& testCase, const std::string& dir);
-// For packets, each must come from settings.callsign when set
+// Each packet must come from settings.callsign when set
 CaseResult decodeFile(const Settings& settings, const std::string& path,
                       const std::string& expected, float minAccuracy);
 // One "SENDER: text" line per packet
 std::string decodePacketsFile(const Settings& settings, const std::string& path, std::string& error);
 
-bool minimodemAvailable();
 bool direwolfAvailable();
 bool atestAvailable();
 bool genPacketsAvailable();

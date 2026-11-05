@@ -1,7 +1,6 @@
 #include "fsk.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -11,24 +10,6 @@ namespace fsk {
 namespace {
 
 constexpr double pi = 3.14159265358979323846;
-constexpr uint8_t LTRS = 0x1F, FIGS = 0x1B, SPACE = 0x04, CR = 0x08, LF = 0x02;
-
-// Index = Baudot code, same as minimodem. 0 = unused
-const char letters[32] = {
-    0,   'E', 0,   'A', 0,   'S', 'I', 'U', 0,   'D', 'R', 'J', 'N', 'F', 'C', 'K',
-    'T', 'Z', 'L', 'W', 'H', 'Y', 'P', 'Q', 'O', 'B', 'G', 0,   'M', 'X', 'V', 0,
-};
-const char figures[32] = {
-    0,   '3', 0,   '-', 0,   0,   '8', '7', 0,   '$', '4', '\'', ',', '!', ':', '(',
-    '5', '"', ')', '2', '#', '6', '0', '1', '9', '?', '&', 0,   '.', '/', ';', 0,
-};
-
-int find(const char table[32], char c) {
-    for (int i = 0; i < 32; i++)
-        if (table[i] == c) return i;
-    return -1;
-}
-
 // Phase-continuous tones
 class Synth {
 public:
@@ -72,15 +53,6 @@ private:
     double lastLevel = 0;
 };
 
-// Start bit, data bits LSB first, stop bits
-void frame(Synth& synth, unsigned bits, int dataBits, double stopBits, double bitTime,
-           double markHz, double spaceHz) {
-    synth.tone(spaceHz, bitTime);
-    for (int i = 0; i < dataBits; i++)
-        synth.tone((bits >> i) & 1 ? markHz : spaceHz, bitTime);
-    synth.tone(markHz, bitTime * stopBits);
-}
-
 uint32_t nextRandom(uint32_t& state) {   // xorshift32
     state ^= state << 13;
     state ^= state >> 17;
@@ -100,56 +72,6 @@ void putLE(std::FILE* f, uint32_t value, int bytes) {
 }
 
 } // namespace
-
-std::vector<uint8_t> baudotEncode(const std::string& text) {
-    std::vector<uint8_t> codes = {LTRS, LTRS};
-    bool inFigures = false;
-    for (char raw : text) {
-        char c = static_cast<char>(std::toupper(static_cast<unsigned char>(raw)));
-        if (c == '\n') {
-            codes.push_back(CR);
-            codes.push_back(LF);
-        } else if (c == '\r') {
-            codes.push_back(CR);
-        } else if (c == ' ') {
-            codes.push_back(SPACE);
-            inFigures = false;                   // The receiver unshifts on space
-        } else if (int code = find(letters, c); code >= 0) {
-            if (inFigures) codes.push_back(LTRS);
-            inFigures = false;
-            codes.push_back(static_cast<uint8_t>(code));
-        } else if (int fig = find(figures, c); fig >= 0) {
-            if (!inFigures) codes.push_back(FIGS);
-            inFigures = true;
-            codes.push_back(static_cast<uint8_t>(fig));
-        }
-    }
-    return codes;
-}
-
-Audio rtty(const std::string& text, float baud, float markHz, float spaceHz, int rate) {
-    Synth synth(rate);
-    double bitTime = 1.0 / baud;
-    synth.silence(0.2);
-    synth.tone(markHz, 1.0);                     // Leader
-    for (uint8_t code : baudotEncode(text))
-        frame(synth, code, 5, 1.5, bitTime, markHz, spaceHz);
-    synth.tone(markHz, 0.5);                     // Trailer
-    synth.silence(0.2);
-    return synth.audio;
-}
-
-Audio bell202(const std::string& text, int rate) {
-    Synth synth(rate);
-    double bitTime = 1.0 / 1200;
-    synth.silence(0.2);
-    synth.tone(1200, 0.5);
-    for (char c : text)
-        frame(synth, static_cast<unsigned char>(c), 8, 1, bitTime, 1200, 2200);
-    synth.tone(1200, 0.3);
-    synth.silence(0.2);
-    return synth.audio;
-}
 
 uint16_t ax25Fcs(const std::vector<uint8_t>& frame) {
     uint16_t crc = 0xFFFF;

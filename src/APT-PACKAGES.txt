@@ -4,10 +4,9 @@ Radio to Text Connector - apt packages needed (Ubuntu / WSL)
 Install everything at once:
 
     sudo apt update
-    sudo apt install build-essential cmake ninja-build gdb pkg-config autoconf automake \
-        libasound2-dev libsndfile1-dev libfftw3-dev libpulse-dev libsndio-dev \
-        libusb-1.0-0-dev libudev-dev libgpiod-dev libbluetooth-dev \
-        alsa-utils libasound2-plugins pulseaudio-utils bluez
+    sudo apt install build-essential cmake ninja-build gdb pkg-config \
+        libasound2-dev libpulse-dev libusb-1.0-0-dev libudev-dev libgpiod-dev libbluetooth-dev \
+        alsa-utils libasound2-plugins pulseaudio-utils bluez direwolf
 
 
 What each one is for
@@ -26,17 +25,8 @@ Building Radio to Text Connector (CMakeLists.txt)
 
 Bluetooth audio at run time
     bluez                bluetoothctl, to pair the radio and list paired devices
-    libasound2-plugins   ALSA "pulse" plugin: minimodem and direwolf reach the virtual
+    libasound2-plugins   ALSA "pulse" plugin: direwolf reaches the virtual
                          sound card through it
-
-Building minimodem (minimodem/install-dependencies-linux.sh)
-    pkg-config           Lets ./configure find the libraries below
-    autoconf, automake   Generate ./configure (autoreconf -i)
-    libfftw3-dev         FFT library minimodem decodes with (required)
-    libsndfile1-dev      Reading .wav files (RadioConnectorCli file.wav)
-    libasound2-dev       ALSA input (--alsa=...)
-    libpulse-dev         PulseAudio input (minimodem's default under WSLg)
-    libsndio-dev         sndio input (optional, script installs it)
 
 Building direwolf (direwolf/CMakeLists.txt)
     libasound2-dev       ALSA sound cards
@@ -49,16 +39,6 @@ Audio under WSL
     alsa-utils           arecord / aplay, to test the mic:  arecord -D default -d 5 test.wav
     libasound2-plugins   ALSA "pulse" plugin, so ALSA "default" reaches the Windows mic via WSLg
     pulseaudio-utils     pactl, to check what WSLg exposes:  pactl list sources short
-
-
-Building minimodem after the packages are installed
----------------------------------------------------
-
-    cd minimodem
-    autoreconf -i
-    ./configure
-    make
-    sudo make install        # installs /usr/local/bin/minimodem, the path main.cpp runs
 
 
 Building direwolf after the packages (and Hamlib) are installed

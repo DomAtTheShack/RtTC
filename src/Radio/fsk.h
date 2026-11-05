@@ -1,5 +1,5 @@
-// fsk.h - Test audio (RTTY, Bell202, AX.25, tones, noise), made without minimodem or
-// direwolf so decoding it checks we match them.
+// fsk.h - Test audio (AX.25, tones, noise), made without direwolf so decoding it checks
+// we match it.
 #ifndef RTC_FSK_H
 #define RTC_FSK_H
 
@@ -14,12 +14,6 @@ struct Audio {
     int rate = 11025;
     std::vector<float> samples;
 };
-
-// ITA2 with U.S. figures, unshift on space (like minimodem). '\n' becomes CR LF
-std::vector<uint8_t> baudotEncode(const std::string& text);
-
-Audio rtty(const std::string& text, float baud, float markHz, float spaceHz, int rate = 11025);
-Audio bell202(const std::string& text, int rate = 11025);
 
 // Frames without FCS. baud: 1200 (AFSK VHF), 300 (AFSK HF) or 9600 (G3RUH)
 Audio ax25(const std::vector<std::vector<uint8_t>>& frames, int baud, int rate = 48000);

@@ -48,7 +48,7 @@ private:
 
 // What keys the transmitter for these settings: the radio over CAT, or (RTS/DTR) only the
 // keying port's line. nullptr for VOX. Throws std::runtime_error. direwolf does its own
-// keying; this is for minimodem sessions and unkeying after direwolf
+// keying; this is for the tuning tone and unkeying after direwolf
 std::unique_ptr<Cat> openPtt(const Settings& settings);
 
 // Keys PTT while it exists

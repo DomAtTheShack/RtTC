@@ -5,22 +5,11 @@ Packet files are from N0CALL-1 to CQ.
 
 | File | What it is | Settings | Must match | Text sent |
 |---|---|---|---|---|
-| `rtty_45_standard.wav` | Amateur standard: 45.45 baud, 170 Hz shift, 2125/2295 Hz | Receive | RTTY 45.45 baud | mark 2125 / space 2295 Hz | squelch 3.5, 8000 Hz | 95% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `rtty_45_punctuation.wav` | Figures shift: digits and punctuation, 45.45 baud | Receive | RTTY 45.45 baud | mark 2125 / space 2295 Hz | squelch 3.5, 8000 Hz | 95% | `CQ CQ DE TEST: (73) - 1/2, OK? $5 & 'HI' "QUOTE" 4.5` |
-| `rtty_45_low_tones.wav` | Low tones 1275/1445 Hz, 45.45 baud | Receive | RTTY 45.45 baud | mark 1275 / space 1445 Hz | squelch 3.5, 8000 Hz | 95% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `rtty_50_weather.wav` | Weather/commercial: 50 baud, 450 Hz shift | Receive | RTTY 50 baud | mark 1275 / space 1725 Hz | squelch 3.5, 8000 Hz | 95% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `rtty_75_170.wav` | 75 baud (100 WPM), 170 Hz shift | Receive | RTTY 75 baud | mark 2125 / space 2295 Hz | squelch 3.5, 8000 Hz | 95% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `rtty_100_425.wav` | 100 baud, 425 Hz shift | Receive | RTTY 100 baud | mark 1287.5 / space 1712.5 Hz | squelch 3.5, 8000 Hz | 90% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `rtty_300_850.wav` | 300 baud, 850 Hz shift (minimodem drops some characters) | Receive | RTTY 300 baud | mark 1785 / space 2635 Hz | squelch 3.5, 48000 Hz | 75% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `rtty_45_narrow_85.wav` | Narrow 85 Hz shift at 45.45 baud (marginal by design) | Receive | RTTY 45.45 baud | mark 957.5 / space 1042.5 Hz | squelch 3.5, 8000 Hz | 85% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `rtty_45_noisy.wav` | Amateur standard with heavy noise (0 dB SNR over the whole band) | Receive | RTTY 45.45 baud | mark 2125 / space 2295 Hz | squelch 3.5, 8000 Hz | 90% | `RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789` |
-| `noise_only.wav` | Noise only: squelch must keep the screen empty | Receive | RTTY 45.45 baud | mark 2125 / space 2295 Hz | squelch 3.5, 8000 Hz | 100% | *(nothing)* |
-| `bell202.wav` | Bell202 1200 bps ASCII, mixed case | Receive | Bell202 1200 bps | squelch 3.5, 48000 Hz | 95% | `Hello from Bell 202 at 1200 bps. 0123456789 !?` |
-| `packet_1200.wav` | direwolf: 1200 baud AX.25 (VHF/FM), three packets | Receive | direwolf 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_1200_noisy.wav` | direwolf: 1200 baud AX.25 with noise (10 dB SNR over the whole band) | Receive | direwolf 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_300.wav` | direwolf: 300 baud AX.25 (HF), three packets | Receive | direwolf 300 baud AX.25 (AFSK, HF) | N0CALL-1, 11025 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_9600.wav` | direwolf: 9600 baud G3RUH AX.25, three packets | Receive | direwolf 9600 baud AX.25 (G3RUH) | N0CALL-1, 48000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_noise_only.wav` | direwolf: noise only, no packets may come out | Receive | direwolf 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | *(nothing)* |
+| `packet_1200.wav` | direwolf: 1200 baud AX.25 (VHF/FM), three packets | Receive | 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_1200_noisy.wav` | direwolf: 1200 baud AX.25 with noise (10 dB SNR over the whole band) | Receive | 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_300.wav` | direwolf: 300 baud AX.25 (HF), three packets | Receive | 300 baud AX.25 (AFSK, HF) | N0CALL-1, 11025 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_9600.wav` | direwolf: 9600 baud G3RUH AX.25, three packets | Receive | 9600 baud AX.25 (G3RUH) | N0CALL-1, 48000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_noise_only.wav` | direwolf: noise only, no packets may come out | Receive | 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | *(nothing)* |
 
 ## Tones
 
@@ -29,7 +18,7 @@ Packet files are from N0CALL-1 to CQ.
 | File | Tone |
 |---|---|
 | `tone_1000hz.wav` | 1000 Hz reference, for setting audio levels |
-| `tone_2125hz_mark.wav` | 2125 Hz, standard RTTY mark |
-| `tone_2295hz_space.wav` | 2295 Hz, standard RTTY space |
-| `tone_1275hz_mark_low.wav` | 1275 Hz, low-tone RTTY mark |
-| `tone_1445hz_space_low.wav` | 1445 Hz, low-tone RTTY space |
+| `tone_1200hz_mark.wav` | 1200 Hz, 1200 baud AFSK mark |
+| `tone_2200hz_space.wav` | 2200 Hz, 1200 baud AFSK space |
+| `tone_1600hz_mark_hf.wav` | 1600 Hz, 300 baud (HF) AFSK mark |
+| `tone_1800hz_space_hf.wav` | 1800 Hz, 300 baud (HF) AFSK space |

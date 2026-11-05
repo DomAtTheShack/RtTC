@@ -1,5 +1,5 @@
 // bt_audio.h - Bluetooth audio to and from a radio (UV-Pro and the like), for
-// minimodem and direwolf. It connects the radio's control and audio channels and moves
+// direwolf. It connects the radio's control and audio channels and moves
 // audio between them and a virtual sound card (virtual_audio.h), which the modems use like
 // any other. The radio transmits while the modems make sound, so PTT is VOX-like.
 #ifndef RTC_BT_AUDIO_H

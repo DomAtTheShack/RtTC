@@ -146,8 +146,8 @@ Two stations need two callsigns, so the programs keep separate settings:
 | RadioConnectorCli (menus) | `settings.ini` | e.g. `N8GM` |
 | RadioConnector | `connector.ini`, or `--settings <file>` | e.g. `N8GM-1` |
 
-Both files live in `%APPDATA%\RTTY-Connector` (Windows), `~/Library/Application
-Support/RTTY-Connector` (macOS) or `~/.config/rtty-connector` (Linux). On its first run the
+Both files live in `%APPDATA%\RtTC` (Windows), `~/Library/Application
+Support/RtTC` (macOS) or `~/.config/rttc` (Linux). On its first run the
 connector creates `connector.ini` as a copy of `settings.ini`, with the next SSID as its
 callsign. Edit it by hand to change the connector's settings.
 

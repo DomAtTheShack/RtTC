@@ -13,29 +13,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const char* const quickFox = "RYRYRY THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789";
-const char* const punctuation = "CQ CQ DE TEST: (73) - 1/2, OK? $5 & 'HI' \"QUOTE\" 4.5";
-
-Settings rtty(float baud, float centre, float shift, float squelch = 3.5f) {
-    Settings s;
-    s.protocol = Protocol::Rtty;
-    s.baud = baud;
-    s.centre = centre;
-    s.shift = shift;
-    s.squelch = squelch;
-    return s;
-}
-
-Settings bell202(float squelch = 3.5f) {
-    Settings s;
-    s.protocol = Protocol::Bell202;
-    s.squelch = squelch;
-    return s;
-}
-
 Settings ax25(int baud) {
     Settings s;
-    s.engine = Engine::Direwolf;
     s.packetBaud = baud;
     s.callsign = testCallsign;
     return s;
@@ -60,8 +39,7 @@ std::string oneLine(const std::string& text) {
 
 } // namespace
 
-std::string testMessage(const Settings& settings) {
-    if (settings.rtty()) return quickFox;
+std::string testMessage(const Settings&) {
     return "Hello from Radio to Text Connector! The quick brown fox 0123456789";
 }
 
@@ -79,30 +57,7 @@ std::vector<packet::Bytes> packetFrames(const std::string& text, const std::stri
 }
 
 const std::vector<AudioCase>& standardCases() {
-    // 300 baud and Bell202 need 48 kHz or minimodem drops characters
     static const std::vector<AudioCase> cases = {
-        {"rtty_45_standard.wav", "Amateur standard: 45.45 baud, 170 Hz shift, 2125/2295 Hz",
-         rtty(45.45f, 2210, 170), 8000, quickFox, false, 0, 0.95f},
-        {"rtty_45_punctuation.wav", "Figures shift: digits and punctuation, 45.45 baud",
-         rtty(45.45f, 2210, 170), 8000, punctuation, false, 0, 0.95f},
-        {"rtty_45_low_tones.wav", "Low tones 1275/1445 Hz, 45.45 baud",
-         rtty(45.45f, 1360, 170), 8000, quickFox, false, 0, 0.95f},
-        {"rtty_50_weather.wav", "Weather/commercial: 50 baud, 450 Hz shift",
-         rtty(50, 1500, 450), 8000, quickFox, false, 0, 0.95f},
-        {"rtty_75_170.wav", "75 baud (100 WPM), 170 Hz shift",
-         rtty(75, 2210, 170), 8000, quickFox, false, 0, 0.95f},
-        {"rtty_100_425.wav", "100 baud, 425 Hz shift",
-         rtty(100, 1500, 425), 8000, quickFox, false, 0, 0.90f},
-        {"rtty_300_850.wav", "300 baud, 850 Hz shift (minimodem drops some characters)",
-         rtty(300, 2210, 850), 48000, quickFox, false, 0, 0.75f},
-        {"rtty_45_narrow_85.wav", "Narrow 85 Hz shift at 45.45 baud (marginal by design)",
-         rtty(45.45f, 1000, 85), 8000, quickFox, false, 0, 0.85f},
-        {"rtty_45_noisy.wav", "Amateur standard with heavy noise (0 dB SNR over the whole band)",
-         rtty(45.45f, 2210, 170), 8000, quickFox, true, 0, 0.90f},
-        {"noise_only.wav", "Noise only: squelch must keep the screen empty",
-         rtty(45.45f, 2210, 170), 8000, "", false, 0, 1.0f},
-        {"bell202.wav", "Bell202 1200 bps ASCII, mixed case",
-         bell202(), 48000, "Hello from Bell 202 at 1200 bps. 0123456789 !?", false, 0, 0.95f},
         {"packet_1200.wav", "direwolf: 1200 baud AX.25 (VHF/FM), three packets",
          ax25(1200), 24000, packetText, false, 0, 1.0f},
         {"packet_1200_noisy.wav", "direwolf: 1200 baud AX.25 with noise (10 dB SNR over the whole band)",
@@ -120,10 +75,10 @@ const std::vector<AudioCase>& standardCases() {
 const std::vector<ToneFile>& toneFiles() {
     static const std::vector<ToneFile> tones = {
         {"tone_1000hz.wav", "1000 Hz reference, for setting audio levels", 1000, 5},
-        {"tone_2125hz_mark.wav", "2125 Hz, standard RTTY mark", 2125, 5},
-        {"tone_2295hz_space.wav", "2295 Hz, standard RTTY space", 2295, 5},
-        {"tone_1275hz_mark_low.wav", "1275 Hz, low-tone RTTY mark", 1275, 5},
-        {"tone_1445hz_space_low.wav", "1445 Hz, low-tone RTTY space", 1445, 5},
+        {"tone_1200hz_mark.wav", "1200 Hz, 1200 baud AFSK mark", 1200, 5},
+        {"tone_2200hz_space.wav", "2200 Hz, 1200 baud AFSK space", 2200, 5},
+        {"tone_1600hz_mark_hf.wav", "1600 Hz, 300 baud (HF) AFSK mark", 1600, 5},
+        {"tone_1800hz_space_hf.wav", "1800 Hz, 300 baud (HF) AFSK space", 1800, 5},
     };
     return tones;
 }
@@ -132,12 +87,8 @@ fsk::Audio generate(const AudioCase& c) {
     fsk::Audio audio;
     if (c.text.empty()) {
         audio = fsk::noise(6, c.rate, 3);
-    } else if (c.settings.packet()) {
-        audio = fsk::ax25(packetFrames(c.text, c.settings.callsign), c.settings.packetBaud, c.rate);
-    } else if (c.settings.rtty()) {
-        audio = fsk::rtty(c.text, c.settings.baud, c.settings.markHz(), c.settings.spaceHz(), c.rate);
     } else {
-        audio = fsk::bell202(c.text, c.rate);
+        audio = fsk::ax25(packetFrames(c.text, c.settings.callsign), c.settings.packetBaud, c.rate);
     }
     if (c.noisy) fsk::addNoise(audio, c.snrDb, 7);
     return audio;
@@ -198,6 +149,10 @@ std::string runForOutput(const std::vector<std::string>& args, int& status, std:
 CaseResult decodePacketFile(const Settings& settings, const std::string& path,
                             const std::string& expected, float minAccuracy) {
     CaseResult result;
+    if (!os::fileReadable(path)) {
+        result.error = path + ": not found";
+        return result;
+    }
     int status;
     std::string output = runForOutput(atestArgs(settings, path), status, result.error);
     if (!result.error.empty()) return result;
@@ -235,49 +190,11 @@ std::string decodePacketsFile(const Settings& settings, const std::string& path,
 
 CaseResult decodeFile(const Settings& settings, const std::string& path,
                       const std::string& expected, float minAccuracy) {
-    CaseResult result;
-    if (!os::fileReadable(path)) {
-        result.error = path + ": not found";
-        return result;
-    }
-    if (settings.packet()) return decodePacketFile(settings, path, expected, minAccuracy);
-    Settings quiet = settings;
-    quiet.quiet = true;
-    std::string output;
-    os::Process process;
-    if (!process.start(minimodemArgs(quiet, false, {"-f", path}))) {
-        result.error = process.error();
-        return result;
-    }
-    char buffer[256];
-    long n;
-    while ((n = process.read(buffer, sizeof buffer)) > 0) output.append(buffer, static_cast<size_t>(n));
-    int status = process.wait();
-    if (status != 0) {
-        result.error = "minimodem exited with " + std::to_string(status);
-        return result;
-    }
-    result.decoded = normalizeText(output);
-    if (expected.empty()) {
-        // Noise only: allow a stray character or two
-        result.accuracy = result.decoded.size() <= 2 ? 1.0f : 0.0f;
-    } else {
-        result.accuracy = textAccuracy(expected, output);
-    }
-    result.passed = result.accuracy >= minAccuracy;
-    return result;
+    return decodePacketFile(settings, path, expected, minAccuracy);
 }
 
 CaseResult runCase(const AudioCase& c, const std::string& dir) {
     return decodeFile(c.settings, (fs::path(dir) / c.file).string(), c.text, c.minAccuracy);
-}
-
-bool minimodemAvailable() {
-    os::Process process;
-    if (!process.start({os::minimodemPath(), "--version"})) return false;
-    char buffer[256];
-    while (process.read(buffer, sizeof buffer) > 0) {}
-    return process.wait() == 0;
 }
 
 namespace {

@@ -1,6 +1,7 @@
 // radio_tests.cpp - RadioTests: every test, with no arguments needed (run by ctest too).
-//   unit   The code on its own: settings, modems' command lines, AX.25, FX.25, the connector
-//   audio  Decodes tests/audio with minimodem and direwolf's atest (skipped without them)
+//   unit   The code on its own: settings, direwolf's config, AX.25, FX.25, the connector,
+//          the Bluetooth protocol
+//   audio  Decodes tests/audio with direwolf's atest (skipped without it)
 //   channel AX.25 through simulated NFM and SSB radios with noise, mistuning and fading:
 //          how far each mode gets. The audio is saved in channel-audio next to the program
 //   cat    Radio control through Hamlib's dummy rig, or a real radio with --cat-port
@@ -132,129 +133,54 @@ bool contains(const std::vector<std::string>& args, const std::vector<std::strin
     return false;
 }
 
-void testShiftFit() {
-    CHECK(shiftFit(170, 45.45f) == ShiftFit::Comfortable);
-    CHECK(shiftFit(85, 45.45f) == ShiftFit::Marginal);
-    CHECK(shiftFit(170, 300) == ShiftFit::TooNarrow);
-    CHECK(shiftFit(850, 300) == ShiftFit::Comfortable);
-}
-
 void testSettingsRoundTrip() {
     Settings s;
     s.operation = Operation::Duplex;
-    s.protocol = Protocol::Bell202;
-    s.baud = 75;
-    s.centre = 1360;
-    s.shift = 425;
-    s.squelch = 2.5f;
+    s.packetBaud = 300;
     s.rxAudio = "plughw:CARD=PCH,DEV=0";
     s.rxAudioDesc = "HDA Intel PCH - Front mic";
     s.txAudio = "default";
     s.catPort = "/dev/ttyACM0";
     s.catBaud = 115200;
-    s.audioFile = "C:\\Users\\me\\My Recordings\\rtty test.wav";
-    s.quiet = true;
+    s.audioFile = "C:\\Users\\me\\My Recordings\\packet test.wav";
 
     Settings back = parseSettings(formatSettings(s));
     CHECK(back.operation == Operation::Duplex);
-    CHECK(back.protocol == Protocol::Bell202);
-    CHECK(back.baud == 75);
-    CHECK(back.centre == 1360);
-    CHECK(back.shift == 425);
-    CHECK(back.squelch == 2.5f);
+    CHECK(back.packetBaud == 300);
     CHECK(back.rxAudio == s.rxAudio);
     CHECK(back.rxAudioDesc == s.rxAudioDesc);
     CHECK(back.txAudio == "default");
     CHECK(back.catPort == "/dev/ttyACM0");
     CHECK(back.catBaud == 115200);
     CHECK(back.audioFile == s.audioFile);
-    CHECK(back.quiet);
-
-    // 45.45 must survive the trip exactly enough to show as 45.45 again
-    Settings defaults;
-    CHECK(formatNumber(parseSettings(formatSettings(defaults)).baud) == "45.45");
 }
 
 void testSettingsGarbage() {
-    Settings s = parseSettings("baud=abc\nshift=-5\noperation=sideways\nnonsense\n=\ncentre=1500\n"
-                               "# comment=1\r\nsquelch = 5 \r\n");
+    Settings s = parseSettings("packet_baud=abc\noperation=sideways\nnonsense\n=\ncallsign = N0CALL-3 \r\n"
+                               "# comment=1\r\nfx25=64\r\n");
     Settings defaults;
-    CHECK(s.baud == defaults.baud);
-    CHECK(s.shift == defaults.shift);
+    CHECK(s.packetBaud == defaults.packetBaud);
     CHECK(s.operation == defaults.operation);
-    CHECK(s.centre == 1500);
-    CHECK(s.squelch == 5);   // Spaces and Windows line endings are fine
-}
-
-void testTones() {
-    Settings s;   // 2210 centre, 170 shift
-    CHECK(s.markHz() == 2125);
-    CHECK(s.spaceHz() == 2295);
-}
-
-void testMinimodemArgs() {
-    Settings s;
-    s.squelch = 3.5f;
-    auto rx = minimodemArgs(s, false, {"-f", "in.wav"});
-    CHECK(contains(rx, {"-5", "--stopbits", "1.5"}));
-    CHECK(contains(rx, {"-M", "2125", "-S", "2295"}));
-    CHECK(contains(rx, {"-f", "in.wav"}));
-    CHECK(contains(rx, {"-c", "3.5"}));
-    CHECK(contains(rx, {"--rx"}));
-    CHECK(!contains(rx, {"--rx-one"}));                  // Duplex switches only on Tab
-    CHECK(!contains(rx, {"-q"}));
-    CHECK(rx.back() == "45.45");                         // minimodem wants the baud rate last
-
-    s.protocol = Protocol::Bell202;
-    s.quiet = true;
-    auto tx = minimodemArgs(s, true, {"--alsa=plug:default"});
-    CHECK(contains(tx, {"--tx-carrier"}));
-    CHECK(contains(tx, {"--tx"}));
-    CHECK(contains(tx, {"-q"}));
-    CHECK(!contains(tx, {"-5"}));
-    CHECK(!contains(tx, {"-c"}));                        // Squelch only matters receiving
-    CHECK(tx.back() == "1200");
-}
-
-void testBaudot() {
-    // LTRS LTRS R Y SPACE FIGS 1 2: a space unshifts at the receiver, so FIGS is sent again
-    std::vector<uint8_t> expected = {0x1F, 0x1F, 0x0A, 0x15, 0x04, 0x1B, 0x17, 0x13};
-    CHECK(fsk::baudotEncode("ry 12") == expected);
-    // Figures then letters without a space needs an explicit LTRS
-    std::vector<uint8_t> mixed = {0x1F, 0x1F, 0x1B, 0x17, 0x1F, 0x03};
-    CHECK(fsk::baudotEncode("1A") == mixed);
-    // Newline is CR LF; characters Baudot can't send are dropped
-    std::vector<uint8_t> newline = {0x1F, 0x1F, 0x03, 0x08, 0x02, 0x03};
-    CHECK(fsk::baudotEncode("a\n{a") == newline);
-}
-
-void testSignalLength() {
-    // 1 s leader + 0.5 s trailer + 0.4 s silence, plus 7.5 bits per code at 50 baud
-    fsk::Audio audio = fsk::rtty("RY", 50, 1275, 1725, 8000);
-    size_t codes = fsk::baudotEncode("RY").size();
-    double seconds = 1.9 + codes * 7.5 / 50;
-    CHECK(audio.rate == 8000);
-    CHECK(std::abs(static_cast<double>(audio.samples.size()) - seconds * 8000) < 2);
+    CHECK(s.callsign == "N0CALL-3");   // Spaces and Windows line endings are fine
+    CHECK(s.fx25 == 64);
 }
 
 void testPacketSettings() {
     Settings s;
-    s.engine = Engine::Direwolf;
     s.packetBaud = 9600;
     s.callsign = "N0CALL-7";
     s.rigModel = 3073;
     Settings back = parseSettings(formatSettings(s));
-    CHECK(back.engine == Engine::Direwolf);
-    CHECK(back.packet());
-    CHECK(!back.rtty());                                  // RTTY settings don't apply to packets
     CHECK(back.packetBaud == 9600);
     CHECK(back.callsign == "N0CALL-7");
     CHECK(back.rigModel == 3073);
-    // Old settings files have no modem line: still minimodem, and the X6100
-    Settings old = parseSettings("protocol=rtty\npacket_baud=4800\n");
-    CHECK(old.engine == Engine::Minimodem);
+    CHECK(formatSettings(s).find("modem=") == std::string::npos);   // minimodem's keys are gone
+    // Files from the minimodem days still load: their RTTY lines are ignored
+    Settings old = parseSettings("modem=minimodem\nprotocol=rtty\nbaud=45.45\nshift=170\nsquelch=3.5\n"
+                                 "quiet=1\npacket_baud=4800\noperation=transmit\ncallsign=N0CALL\n");
     CHECK(old.rigModel == defaultRigModel);
     CHECK(old.packetBaud == 1200);                        // 4800 isn't a direwolf speed we offer
+    CHECK(old.operation == Operation::Transmit && old.callsign == "N0CALL");
 }
 
 void testPttSettings() {
@@ -292,7 +218,6 @@ void testPttSettings() {
 
 void testFx25() {
     Settings s;
-    s.engine = Engine::Direwolf;
     CHECK(s.fx25 == 1);                                   // Auto unless chosen
     for (int mode : {0, 1, 16, 32, 64}) {
         s.fx25 = mode;
@@ -429,7 +354,6 @@ void testMonitorLines() {
 
 void testDirewolfConfig() {
     Settings s;
-    s.engine = Engine::Direwolf;
     s.packetBaud = 300;
     s.callsign = "N0CALL-7";
     std::string vox = direwolfConfig(s, "plughw:1,0", "default", 7001);
@@ -1150,13 +1074,8 @@ int runUnit() {
         void (*run)();
     };
     const Test tests[] = {
-        {"Shift vs baud rating", testShiftFit},
         {"Settings save and load", testSettingsRoundTrip},
         {"Broken settings file", testSettingsGarbage},
-        {"Mark and space tones", testTones},
-        {"minimodem command lines", testMinimodemArgs},
-        {"Baudot encoding", testBaudot},
-        {"Signal length", testSignalLength},
         {"Accuracy scoring", testAccuracy},
         {"Simulated radios", testChannelModels},
         {"Packet settings", testPacketSettings},
@@ -1210,29 +1129,20 @@ int runUnit() {
 }
 
 int runAudio(const std::string& dir) {
-    bool haveMinimodem = minimodemAvailable(), haveAtest = atestAvailable();
-    if (!haveMinimodem && !haveAtest) {
-        std::printf("Neither minimodem nor atest found; skipping the audio tests\n");
+    if (!atestAvailable()) {
+        std::printf("atest not found; skipping the audio tests\n");
         annotate("notice", "src/tests/audio/README.md", 0, "Audio tests skipped",
-                 "minimodem and direwolf aren't installed on this runner, so tests/audio wasn't decoded here");
-        appendSummary("### Audio tests (" + runnerName() + ")\n\n⏭️ Skipped: minimodem and direwolf "
-                      "aren't installed on this runner.\n\n");
+                 "direwolf (atest) isn't installed on this runner, so tests/audio wasn't decoded here");
+        appendSummary("### Audio tests (" + runnerName() + ")\n\n⏭️ Skipped: direwolf (atest) "
+                      "isn't installed on this runner.\n\n");
         return 77;
     }
-    int failed = 0, skipped = 0;
+    int failed = 0;
     string summary = "### Audio tests (" + runnerName() + ")\n\nEach file in `tests/audio` decoded "
-                     "by minimodem (or direwolf's atest, for packets) with the program's own settings.\n\n"
+                     "by direwolf's atest with the program's own settings.\n\n"
                      "| Result | Right | Needed | File | What it tests |\n|---|---|---|---|---|\n";
     string failureDetails;
     for (const AudioCase& c : standardCases()) {
-        if (!(c.settings.packet() ? haveAtest : haveMinimodem)) {
-            const char* tool = c.settings.packet() ? "atest" : "minimodem";
-            std::printf("SKIP            %s (%s not installed)\n", c.file.c_str(), tool);
-            summary += "| ⏭️ SKIP | | | `" + c.file + "` | " + cell(c.description) + " (" + tool +
-                       " not installed) |\n";
-            skipped++;
-            continue;
-        }
         CaseResult result = runCase(c, dir);
         std::printf("%s %3.0f%% (need %.0f%%)  %s\n", result.passed ? "PASS" : "FAIL",
                     result.accuracy * 100, c.minAccuracy * 100, c.file.c_str());
@@ -1255,13 +1165,10 @@ int runAudio(const std::string& dir) {
         failureDetails += "\n**`" + c.file + "`** (" + cell(describe(c.settings)) + ")\n```\n" +
                     detail + "\n```\n";
     }
-    int total = static_cast<int>(standardCases().size()) - skipped;
-    std::printf("%d of %d passed", total - failed, total);
-    if (skipped) std::printf(" (%d skipped)", skipped);
-    std::printf("\n");
+    int total = static_cast<int>(standardCases().size());
+    std::printf("%d of %d passed\n", total - failed, total);
     summary += "\n**" + std::to_string(total - failed) + " of " + std::to_string(total) +
-               " passed**" + (skipped ? " (" + std::to_string(skipped) + " skipped)" : "") + "\n" +
-               failureDetails;
+               " passed**\n" + failureDetails;
     appendSummary(summary + "\n");
     return failed == 0 ? 0 : 1;
 }
@@ -1469,7 +1376,6 @@ public:
         if (ec) return "couldn't make " + workDir.string();
 
         Settings station = settings;
-        station.engine = Engine::Direwolf;
         station.operation = Operation::Duplex;
         station.rxAudio = rx;
         station.txAudio = tx;
@@ -1881,7 +1787,6 @@ int runChannel() {
                     "Each file is AX.25 test frames through a simulated radio; play one to hear it.\n";
     for (const ChannelScenario& scenario : channelScenarios()) {
         Settings settings;
-        settings.engine = Engine::Direwolf;
         settings.packetBaud = scenario.baud;
         std::vector<string> texts;
         std::vector<packet::Bytes> frames;

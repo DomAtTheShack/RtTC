@@ -157,11 +157,11 @@ public:
     void close() override { closed = true; }
 
 #ifdef __APPLE__
-    // Homebrew minimodem takes PulseAudio names (PULSE_SOURCE and PULSE_SINK)
+    // PulseAudio names, for programs that take them (PULSE_SOURCE and PULSE_SINK)
     std::string modemCaptureDevice() const override { return std::string(rxSink) + ".monitor"; }
     std::string modemPlaybackDevice() const override { return txSink; }
 #else
-    // minimodem and direwolf use ALSA; its PulseAudio plugin ("pulse") goes to these
+    // direwolf uses ALSA; its PulseAudio plugin ("pulse") goes to these
     std::string modemCaptureDevice() const override { return "pulse"; }
     std::string modemPlaybackDevice() const override { return "pulse"; }
 #endif

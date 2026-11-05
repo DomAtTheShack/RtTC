@@ -58,7 +58,7 @@ void save(const Settings& settings) {
 }
 
 // Pads name so values line up in a column
-string padded(const string& name, size_t width = 14) {
+string padded(const string& name, size_t width = 16) {
     return name.size() >= width ? name + " " : name + string(width - name.size(), ' ');
 }
 
@@ -88,27 +88,6 @@ bool pickOption(const string& title, const Option (&options)[N], float& value,
 }
 
 // ---- Sound cards ----------------------------------------------------------------
-
-// minimodem's arguments for a sound card
-vector<string> audioArgsFor(const string& name, bool playback) {
-#ifdef _WIN32
-    // Cygwin minimodem uses PulseAudio, so start one on this device
-    string error = os::useMinimodemDevice(name, playback ? os::AudioDirection::Playback
-                                                         : os::AudioDirection::Capture);
-    if (!error.empty()) showMessage("minimodem will use the Windows default sound card", error);
-    return {};
-#elif defined(__APPLE__)
-    // Homebrew minimodem uses PulseAudio, which picks the device from these variables
-    setenv(playback ? "PULSE_SINK" : "PULSE_SOURCE", name.c_str(), 1);
-    return {};
-#else
-    (void)playback;
-    // minimodem turns a name without ':' into "plughw:<name>", so wrap it in plug:
-    string alsaName = name;
-    if (alsaName.find(':') == string::npos) alsaName = "plug:" + alsaName;
-    return {"--alsa=" + alsaName};
-#endif
-}
 
 vector<os::AudioDevice> findAudioDevices(os::AudioDirection direction) {
     ansi::clearScreen();
@@ -158,12 +137,6 @@ std::optional<string> resolveAudioName(Settings& settings, bool playback) {
         save(settings);
     }
     return playback ? settings.txAudio : settings.rxAudio;
-}
-
-std::optional<vector<string>> resolveAudio(Settings& settings, bool playback) {
-    auto name = resolveAudioName(settings, playback);
-    if (!name) return std::nullopt;
-    return audioArgsFor(*name, playback);
 }
 
 // ---- Bluetooth -----------------------------------------------------------------
@@ -350,16 +323,12 @@ void unkeyAfterDirewolf(const Settings& settings) {
 void printSessionHeader(const Settings& settings, bool onAir) {
     ansi::clearScreen();
     ansi::print(infoColor, ansi::Bold, "%s\n", describe(settings).c_str());
-    if (settings.rtty() && shiftFit(settings.shift, settings.baud) != ShiftFit::Comfortable) {
-        ansi::print(warnColor, "Warning: %g Hz shift is narrow for %g baud\n",
-                    settings.shift, settings.baud);
-    }
     if (onAir) {
         ansi::print(infoColor, "PTT: %s\n", pttDescription(settings).c_str());
         if (settings.ptt == PttType::Cat)
             ansi::print(infoColor, "Radio: %s\n", radioControlDescription(settings).c_str());
     }
-    if (settings.packet() && settings.transmits() && !settings.sendTo.empty())
+    if (settings.transmits() && !settings.sendTo.empty())
         ansi::print(infoColor, "Sending to %s\n", settings.sendTo.c_str());
     ansi::flush();
 }
@@ -486,8 +455,8 @@ void startPacketSession(Settings& settings) {
     }
     if (useFile) {   // Transmit: write packets to the file
         printSessionHeader(settings, false);
-        bool ok = runTransmit(genPacketsArgs(settings, file), nullptr, "", false,
-                              genPacketsFormat(settings.callsign, sendToAddress(settings), settings.fx25));
+        bool ok = runFileTransmit(genPacketsArgs(settings, file),
+                                  genPacketsFormat(settings.callsign, sendToAddress(settings), settings.fx25));
         if (!ok) ansi::print(failColor, "\nStopped with an error.\n");
         ansi::waitKey();
         return;
@@ -498,7 +467,7 @@ void startPacketSession(Settings& settings) {
         // Homebrew's direwolf uses the Mac's default sound card, which the bridge can't be
         showMessage("Bluetooth packet needs Linux or Windows",
                     "On macOS direwolf always uses the system's default sound card, so it can't "
-                    "reach the Bluetooth radio. minimodem modes work.");
+                    "reach the Bluetooth radio.");
         return;
     }
 #endif
@@ -543,53 +512,7 @@ void startSession(Settings& settings) {
         std::error_code ec;
         fs::remove(file, ec);
     }
-    if (settings.packet()) {
-        startPacketSession(settings);
-        return;
-    }
-
-    BluetoothSession bluetooth;
-    if (settings.usesBluetooth() && !bluetooth.start(settings)) return;
-
-    vector<string> rxAudio, txAudio;
-    if (useFile) {
-        (settings.transmits() ? txAudio : rxAudio) = {"-f", file};
-    } else {
-        if (settings.receives()) {
-            auto args = bluetooth.capture().empty() ? resolveAudio(settings, false)
-                                                    : audioArgsFor(bluetooth.capture(), false);
-            if (!args) return;
-            rxAudio = *args;
-        }
-        if (settings.transmits()) {
-            auto args = bluetooth.playback().empty() ? resolveAudio(settings, true)
-                                                     : audioArgsFor(bluetooth.playback(), true);
-            if (!args) return;
-            txAudio = *args;
-        }
-    }
-
-    bool onAir = settings.transmits() && !useFile;
-    std::unique_ptr<Cat> radio;   // Keys PTT; empty for VOX
-    if (onAir && !openRadio(settings, radio)) return;
-
-    printSessionHeader(settings, onAir);
-    bool ok = true;
-    switch (settings.operation) {
-        case Operation::Receive:
-            ok = runReceive(minimodemArgs(settings, false, rxAudio));
-            break;
-        case Operation::Transmit:
-            ok = runTransmit(minimodemArgs(settings, true, txAudio), radio.get());
-            break;
-        case Operation::Duplex:
-            ok = runDuplex(minimodemArgs(settings, true, txAudio),
-                           minimodemArgs(settings, false, rxAudio), radio.get());
-            break;
-    }
-    radio.reset();
-    if (!ok) ansi::print(failColor, "\nStopped with an error.\n");
-    ansi::waitKey();
+    startPacketSession(settings);
 }
 
 // ---- Settings menu -------------------------------------------------------------
@@ -764,35 +687,6 @@ void pickFx25(Settings& settings) {
     if (choice >= 0) settings.fx25 = modes[choice];
 }
 
-void pickShift(Settings& settings) {
-    // Recommend the narrowest shift that suits the baud rate
-    int recommended = -1;
-    for (int i = 0; i < static_cast<int>(std::size(shifts)); i++) {
-        if (shiftFit(shifts[i].value, settings.baud) == ShiftFit::Comfortable &&
-            (recommended == -1 || shifts[i].value < shifts[recommended].value)) recommended = i;
-    }
-    pickOption("Shift (for " + formatNumber(settings.baud) + " baud)", shifts, settings.shift,
-               [&](int i) -> string {
-        switch (shiftFit(shifts[i].value, settings.baud)) {
-            case ShiftFit::TooNarrow: return "  [too narrow]";
-            case ShiftFit::Marginal:  return "  [marginal]";
-            case ShiftFit::Comfortable: return i == recommended ? "  [recommended]" : "";
-        }
-        return "";
-    });
-}
-
-string shiftValue(const Settings& s) {
-    string text = formatNumber(s.shift) + " Hz  (mark " + formatNumber(s.markHz()) + " / space " +
-                  formatNumber(s.spaceHz()) + " Hz)";
-    switch (shiftFit(s.shift, s.baud)) {
-        case ShiftFit::TooNarrow:   text += "  [too narrow]"; break;
-        case ShiftFit::Marginal:    text += "  [marginal]";   break;
-        case ShiftFit::Comfortable: break;
-    }
-    return text;
-}
-
 string audioValue(const string& name, const string& desc) {
     if (name.empty()) return "(not set)";
     return desc.empty() ? name : desc + "  [" + name + "]";
@@ -813,41 +707,15 @@ void settingsMenu(Settings& settings) {
                                       static_cast<int>(s.operation));
             if (choice >= 0) s.operation = static_cast<Operation>(choice);
         }});
-        const char* modems[] = {"minimodem (RTTY, Bell202)", "direwolf (AX.25)"};
-        items.push_back({"Modem", modems[static_cast<int>(s.engine)], [&] {
-            int choice = ansi::select("Modem", modems, static_cast<int>(s.engine));
-            if (choice >= 0) s.engine = static_cast<Engine>(choice);
-        }});
-        if (s.packet()) {
-            items.push_back({"Packet speed", std::to_string(s.packetBaud) + " baud  (" +
-                             packetModemName(s.packetBaud) + ")", [&] { pickPacketBaud(s); }});
-            items.push_back({"Callsign", s.callsign.empty() ? "(not set)" : s.callsign,
-                             [&] { pickCallsign(s); }});
-            // Only sending needs the setting: direwolf decodes FX.25 whenever it hears it
-            if (s.transmits()) {
-                items.push_back({"Send to", s.sendTo.empty() ? "CQ (everyone)" : s.sendTo,
-                                 [&] { pickSendTo(s); }});
-                items.push_back({"FX.25", fx25Name(s.fx25), [&] { pickFx25(s); }});
-            }
-        } else {
-            items.push_back({"Protocol", protocolName(s.protocol), [&] {
-                int choice = ansi::select("Protocol", {"RTTY", "Bell202"},
-                                          static_cast<int>(s.protocol));
-                if (choice >= 0) s.protocol = static_cast<Protocol>(choice);
-            }});
-        }
-        if (s.rtty()) {
-            items.push_back({"Baud rate", formatNumber(s.baud), [&] {
-                pickOption("Baud rate", baudRates, s.baud);
-            }});
-            items.push_back({"Centre", formatNumber(s.centre) + " Hz", [&] {
-                pickOption("Centre frequency", centreFreqs, s.centre);
-            }});
-            items.push_back({"Shift", shiftValue(s), [&] { pickShift(s); }});
-        }
-        if (s.receives() && !s.packet()) {
-            items.push_back({"Squelch", squelchLevels[nearestOption(squelchLevels, s.squelch)].label,
-                             [&] { pickOption("Squelch", squelchLevels, s.squelch); }});
+        items.push_back({"Packet speed", std::to_string(s.packetBaud) + " baud  (" +
+                         packetModemName(s.packetBaud) + ")", [&] { pickPacketBaud(s); }});
+        items.push_back({"Callsign", s.callsign.empty() ? "(not set)" : s.callsign,
+                         [&] { pickCallsign(s); }});
+        // Only sending needs the setting: direwolf decodes FX.25 whenever it hears it
+        if (s.transmits()) {
+            items.push_back({"Send to", s.sendTo.empty() ? "CQ (everyone)" : s.sendTo,
+                             [&] { pickSendTo(s); }});
+            items.push_back({"FX.25", fx25Name(s.fx25), [&] { pickFx25(s); }});
         }
         if (bluetoothBuiltIn() || !s.bluetooth.empty())
             items.push_back({"Bluetooth radio", bluetoothDescription(s), [&] { pickBluetooth(s); }});
@@ -861,7 +729,7 @@ void settingsMenu(Settings& settings) {
                              [&] { pickBluetoothCable(s, false); }});
         }
         // direwolf always listens, even when only transmitting
-        if ((s.receives() || s.packet()) && !bluetoothCard) {
+        if (!bluetoothCard) {
             items.push_back({"Rx sound card", audioValue(s.rxAudio, s.rxAudioDesc), [&] {
                 auto devices = findAudioDevices(os::AudioDirection::Capture);
                 pickAudioDevice(s, os::AudioDirection::Capture, devices);
@@ -880,11 +748,6 @@ void settingsMenu(Settings& settings) {
         items.push_back({"Audio file", s.audioFile.empty() ? "(none)" : s.audioFile, [&] {
             ansi::inputLine("Audio file", "WAV file. Empty = sound card", s.audioFile);
         }});
-        if (!s.packet()) {
-            items.push_back({"Carrier lines", s.quiet ? "Hidden" : "Shown", [&] {
-                s.quiet = !s.quiet;
-            }});
-        }
         items.push_back({"Reset to defaults", "", [&] {
             if (ansi::select("Reset all settings?", {"Reset", "Cancel"}, 1) == 0)
                 s = Settings{};
@@ -912,15 +775,8 @@ void loopbackTest(const Settings& current) {
     ansi::print(titleColor, ansi::Bold, "Loopback self-test\n\n");
     string text = testMessage(settings);
     fs::path path = fs::temp_directory_path() / "radio-to-text-selftest.wav";
-    fsk::Audio audio;
-    if (settings.packet()) {
-        if (settings.callsign.empty()) settings.callsign = testCallsign;
-        audio = fsk::ax25(packetFrames(text, settings.callsign), settings.packetBaud, 48000);
-    } else if (settings.rtty()) {
-        audio = fsk::rtty(text, settings.baud, settings.markHz(), settings.spaceHz(), 48000);
-    } else {
-        audio = fsk::bell202(text, 48000);
-    }
+    if (settings.callsign.empty()) settings.callsign = testCallsign;
+    fsk::Audio audio = fsk::ax25(packetFrames(text, settings.callsign), settings.packetBaud, 48000);
     if (!fsk::writeWav(path.string(), audio)) {
         showMessage("Self-test failed", "Could not write " + path.string());
         return;
@@ -935,20 +791,11 @@ void loopbackTest(const Settings& current) {
 
     if (!result.error.empty()) {
         ansi::print(failColor, "\nFAIL: %s\n", result.error.c_str());
-        if (settings.packet() && !atestAvailable())
-            ansi::print(warnColor, "atest not found at %s\n", os::atestPath());
-        if (!settings.packet() && !minimodemAvailable())
-            ansi::print(warnColor, "minimodem not found at %s\n", os::minimodemPath());
+        if (!atestAvailable()) ansi::print(warnColor, "atest not found at %s\n", os::atestPath());
     } else {
         ansi::print(infoColor, "Decoded:  %s\n\n", result.decoded.c_str());
         ansi::print(result.passed ? infoColor : failColor, ansi::Bold, "%s  (%.0f%%)\n",
                     result.passed ? "PASS" : "FAIL", result.accuracy * 100);
-        if (!result.passed && settings.rtty() && settings.baud >= 300)
-            ansi::print(warnColor, "minimodem drops characters at 300 baud.\n");
-        if (!result.passed && settings.rtty() && shiftFit(settings.shift, settings.baud) != ShiftFit::Comfortable)
-            ansi::print(warnColor, "Shift is narrow for this baud rate.\n");
-        if (!result.passed && settings.receives() && settings.squelch > 3.5f)
-            ansi::print(warnColor, "Squelch may be too high.\n");
     }
     ansi::waitKey();
 }
@@ -959,24 +806,17 @@ void runStandardTests() {
         showMessage("Test files not found", "No test-audio or tests/audio folder found.");
         return;
     }
-    bool haveMinimodem = minimodemAvailable(), haveAtest = atestAvailable();
-    if (!haveMinimodem && !haveAtest) {
-        showMessage("No decoders found", "Install minimodem or direwolf first.");
+    if (!atestAvailable()) {
+        showMessage("atest not found", string("Install direwolf first (atest comes with it). Looked at ") +
+                    os::atestPath());
         return;
     }
     ansi::clearScreen();
     ansi::print(titleColor, ansi::Bold, "Standard test files\n");
     ansi::print(dimColor, "%s\n\n", dir.c_str());
-    int passed = 0, skipped = 0;
+    int passed = 0;
     const auto& cases = standardCases();
     for (const AudioCase& c : cases) {
-        if (!(c.settings.packet() ? haveAtest : haveMinimodem)) {
-            skipped++;
-            ansi::print(warnColor, "  SKIP  ");
-            ansi::print(dimColor, "      %-26s %s not installed\n", c.file.c_str(),
-                        c.settings.packet() ? "atest" : "minimodem");
-            continue;
-        }
         ansi::print(dimColor, "  ....  %s", c.file.c_str());
         ansi::flush();
         CaseResult result = runCase(c, dir);
@@ -989,13 +829,12 @@ void runStandardTests() {
         else if (!result.passed)
             ansi::print(failColor, "        decoded: %s\n", result.decoded.substr(0, 100).c_str());
     }
-    int ran = static_cast<int>(cases.size()) - skipped;
-    ansi::print(passed == ran ? infoColor : failColor, ansi::Bold, "\n%d of %d passed", passed, ran);
-    if (skipped) ansi::print(warnColor, " (%d skipped)", skipped);
-    std::printf("\n");
+    int ran = static_cast<int>(cases.size());
+    ansi::print(passed == ran ? infoColor : failColor, ansi::Bold, "\n%d of %d passed\n", passed, ran);
     ansi::waitKey();
 }
 
+// One packet with the test message, then stops
 void packetTestMessage(Settings& settings) {
     Settings onAir = settings;
     onAir.operation = Operation::Transmit;
@@ -1005,9 +844,12 @@ void packetTestMessage(Settings& settings) {
         save(settings);
         onAir.callsign = settings.callsign;
     }
-    auto rxName = resolveAudioName(settings, false);
+    BluetoothSession bluetooth;
+    if (onAir.usesBluetooth() && !bluetooth.start(onAir)) return;
+    std::optional<string> rxName = bluetooth.capture(), txName = bluetooth.playback();
+    if (rxName->empty()) rxName = resolveAudioName(settings, false);
     if (!rxName) return;
-    auto txName = resolveAudioName(settings, true);
+    if (txName->empty()) txName = resolveAudioName(settings, true);
     if (!txName) return;
     printSessionHeader(onAir, true);
     PacketSession session;
@@ -1020,33 +862,76 @@ void packetTestMessage(Settings& settings) {
     ansi::waitKey();
 }
 
-// Tuning tone or test message. The tone always comes from minimodem (1200 Hz in packet mode)
-void testTransmit(Settings& settings, bool message) {
-    if (message && settings.packet()) {
-        packetTestMessage(settings);
-        return;
+// A steady tone for setting levels and checking the radio keys, until a key is pressed
+void tuningTone(Settings& settings) {
+    // AFSK's two tones, the centre between them, and a level-setting reference
+    const struct { int hz; const char* label; } tones[] = {
+        {1700, "1700 Hz  centre of 1200 baud (1200/2200)"},
+        {1200, "1200 Hz  1200 baud mark"},
+        {2200, "2200 Hz  1200 baud space"},
+        {1700, "1700 Hz  centre of 300 baud HF (1600/1800)"},
+        {1000, "1000 Hz  reference"},
+    };
+    vector<string> labels;
+    for (const auto& t : tones) labels.emplace_back(t.label);
+    int choice = ansi::select("Tuning tone", labels, settings.packetBaud == 300 ? 3 : 0,
+                              "It transmits until a key is pressed");
+    if (choice < 0) return;
+    int hz = tones[choice].hz;
+
+    BluetoothSession bluetooth;
+    if (settings.usesBluetooth() && !bluetooth.start(settings)) return;
+    string device = bluetooth.playback();
+    if (device.empty()) {
+        auto name = resolveAudioName(settings, true);
+        if (!name) return;
+        device = *name;
     }
-    Settings onAir = settings;
-    onAir.operation = Operation::Transmit;
-    if (onAir.packet()) {
-        onAir.engine = Engine::Minimodem;
-        onAir.protocol = Protocol::Bell202;
-    }
-    auto txAudio = resolveAudio(settings, true);
-    if (!txAudio) return;
-    std::unique_ptr<Cat> radio;
+    std::unique_ptr<Cat> radio;   // Keys PTT; empty for VOX and Bluetooth
     if (!openRadio(settings, radio)) return;
 
+    Settings onAir = settings;
+    onAir.operation = Operation::Transmit;
     printSessionHeader(onAir, true);
-    if (!message) {
-        float hz = onAir.rtty() ? onAir.markHz() : 1200;
-        ansi::print(infoColor, "Tone: %g Hz\n", hz);
+    ansi::print(infoColor, "Tone: %d Hz  (any key stops)\n", hz);
+    ansi::flush();
+
+    // A second of whole cycles at 48 kHz (32 kHz for Bluetooth, its own rate), so it
+    // loops without a click. Half scale: plenty for setting levels
+    int rate = bluetooth.playback().empty() ? 48000 : 32000;
+    fsk::Audio second = fsk::tone(static_cast<float>(hz), 1.0f, rate);
+    vector<int16_t> samples(second.samples.size());
+    for (size_t i = 0; i < samples.size(); i++)
+        samples[i] = static_cast<int16_t>(std::lround(second.samples[i] * 32767));
+
+    string error;
+    {
+        std::optional<PttGuard> keyed;
+        try {
+            if (radio) keyed.emplace(*radio);
+        } catch (const std::exception& e) {
+            error = string("can't key the radio: ") + e.what();
+        }
+        ansi::setRawMode(true);
+        if (error.empty()) {
+            error = os::playTone(device, samples, rate, [] {
+                if (!os::waitForInput(0)) return true;
+                os::readInputByte();
+                return false;
+            });
+        }
+        ansi::setRawMode(false);
     }
-    vector<string> args = minimodemArgs(onAir, true, *txAudio);
-    bool ok = message ? runTransmit(args, radio.get(), testMessage(onAir) + "\n", true)
-                      : runTransmit(args, radio.get());
-    radio.reset();
-    if (!ok) ansi::print(failColor, "\nStopped with an error.\n");
+    // PttGuard swallows errors; this one must be seen
+    if (radio) {
+        try {
+            radio->setPtt(false);
+        } catch (const std::exception& e) {
+            ansi::print(failColor, "Couldn't unkey the radio (%s). Check it isn't transmitting!\n", e.what());
+        }
+    }
+    if (!error.empty()) ansi::print(failColor, "\n%s\n", error.c_str());
+    else ansi::print(dimColor, "\nStopped.\n");
     ansi::waitKey();
 }
 
@@ -1090,8 +975,8 @@ void testMenu(Settings& settings) {
         switch (choice) {
             case 0: loopbackTest(settings);         break;
             case 1: runStandardTests();             break;
-            case 2: testTransmit(settings, false);  break;
-            case 3: testTransmit(settings, true);   break;
+            case 2: tuningTone(settings);           break;
+            case 3: packetTestMessage(settings);    break;
             case 4: checkCat(settings);             break;
         }
     }
@@ -1103,13 +988,10 @@ int main(int argc, char** argv) {
     Settings settings = loadSettings();
 
     for (int i = 1; i < argc; i++) {
-        if (std::strcmp(argv[i], "-q") == 0) {
-            settings.quiet = true;
-        } else if (argv[i][0] != '-') {
+        if (argv[i][0] != '-') {
             settings.audioFile = argv[i];
         } else {
-            std::fprintf(stderr, "Usage: %s [-q] [file.wav]\n"
-                         "  -q        hide carrier lines\n"
+            std::fprintf(stderr, "Usage: %s [file.wav]\n"
                          "  file.wav  decode (Receive) or write (Transmit) this file\n", argv[0]);
             return EXIT_FAILURE;
         }
@@ -1117,19 +999,15 @@ int main(int argc, char** argv) {
     if (argc > 1) save(settings);
 
 #ifndef _WIN32
-    // Bigger PulseAudio buffer so minimodem's Tx audio doesn't gap (WSLg, virtual cables)
+    // Bigger PulseAudio buffer so direwolf's Tx audio doesn't gap (WSLg, virtual cables)
     setenv("PULSE_LATENCY_MSEC", "100", 0);
 #endif
 
-    bool haveMinimodem = minimodemAvailable();
     bool haveDirewolf = direwolfAvailable();
     int cursor = 0;
     for (;;) {
         string status;
-        if (settings.packet() && !haveDirewolf)
-            status = string("direwolf not found at ") + os::direwolfPath();
-        if (!settings.packet() && !haveMinimodem)
-            status = string("minimodem not found at ") + os::minimodemPath();
+        if (!haveDirewolf) status = string("direwolf not found at ") + os::direwolfPath();
         vector<string> items = {
             "Start        " + describe(settings),
             "Settings",

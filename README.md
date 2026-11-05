@@ -1,10 +1,11 @@
 ## Radio to Text Connector
 
-Send and receive text over ham radio.
+Send and receive text over ham radio as AX.25 packets, through direwolf: 300, 1200 or
+9600 baud, with FX.25 error correction. One packet per line, with your callsign and error
+checking.
 
-- **minimodem**: RTTY (Baudot) or Bell202, a continuous character stream.
-- **direwolf**: AX.25 packets at 300, 1200 or 9600 baud, with FX.25 error correction. One
-  packet per line, with your callsign and error checking.
+The minimodem version (RTTY and Bell202 as well) is kept on the `archive/minimodem`
+branch. It's frozen and doesn't merge back.
 
 PTT is VOX, a CAT command (Hamlib), or the RTS/DTR line of a serial port, which can be a
 second port (e.g. the FTDX3000's Standard port). Common Icom, Yaesu, Kenwood, Elecraft and
@@ -28,27 +29,24 @@ Run `RadioConnectorCli`:
 
 - **Start** runs with the current settings.
 - **Settings** changes them. They're saved to:
-  - Windows: `%APPDATA%\RTTY-Connector\settings.ini`
-  - macOS: `~/Library/Application Support/RTTY-Connector/settings.ini`
-  - Linux: `~/.config/rtty-connector/settings.ini`
-- **Test tools**: loopback self-test, test files, tuning tone, test message, CAT check.
+  - Windows: `%APPDATA%\RtTC\settings.ini`
+  - macOS: `~/Library/Application Support/RtTC/settings.ini`
+  - Linux: `~/.config/rttc/settings.ini`
+
+  The first run copies the files from the old folder (`RTTY-Connector`, or
+  `rtty-connector` on Linux), which is left as it was.
+- **Test tools**: loopback self-test, test files, tuning tone (a steady tone at the AFSK
+  tones, to set audio levels and check the radio keys; any key stops it), test message,
+  CAT check.
 
 Menu keys: Up/Down (j/k), PgUp/PgDn, Home/End, Enter to choose, Esc/q to go back, or type
 an item's number.
 
-`RadioConnectorCli [-q] [file.wav]`: `file.wav` is decoded (Receive) or written
-(Transmit); `-q` hides carrier lines.
+`RadioConnectorCli [file.wav]`: `file.wav` is decoded (Receive) or written (Transmit).
 
-#### minimodem
+#### Sessions
 
-- **Receive**: prints text until Esc.
-- **Transmit**: Enter sends a line, Tab finishes, Esc stops.
-- **Duplex**: transmit until Tab, then receive until Tab. It never switches by itself, since
-  signals fade and a lost tone doesn't mean the other station has finished.
-
-#### direwolf
-
-Set **Modem** to direwolf, then **Packet speed** and **Callsign**.
+Set **Packet speed** and **Callsign**, then **Mode**:
 
 - **Receive**: shows packets as they arrive.
 - **Transmit**: Enter sends a packet, Tab finishes.
@@ -103,17 +101,15 @@ Logs go to stderr.
 - [docs/bluetooth-audio.md](docs/bluetooth-audio.md): audio over Bluetooth to UV-Pro-style
   radios, how to set it up, and how the radio's protocol works.
 
-### Installing the modems
+### Installing direwolf
 
 - **Windows**: the build compiles direwolf with Hamlib (the official build has no CAT
   PTT). Put the source in `direwolf/`
   (`git clone --branch 1.8.1 https://github.com/wb2osz/direwolf.git`), or build with
-  `-DRTC_DIREWOLF=OFF`. minimodem is the Cygwin build; install Cygwin's `pulseaudio`
-  package too, which the program runs on the sound cards you pick. Allow direwolf through
-  Windows Firewall if asked.
-- **Linux**: `sudo apt install minimodem direwolf` (see `src/APT-PACKAGES.txt`).
-- **macOS**: `brew install minimodem direwolf && brew services start pulseaudio`.
-  direwolf uses the default sound devices.
+  `-DRTC_DIREWOLF=OFF`. Allow direwolf through Windows Firewall if asked.
+- **Linux**: `sudo apt install direwolf` (see `src/APT-PACKAGES.txt`).
+- **macOS**: `brew install direwolf pulseaudio && brew services start pulseaudio`.
+  direwolf uses the default sound devices; PulseAudio plays the tuning tone.
 
 The programs look on the PATH, in `/usr/local/bin`, `/opt/homebrew/bin` and next to
 themselves.
@@ -145,7 +141,7 @@ Source layout:
 | Folder | What's in it |
 | --- | --- |
 | `src/` | RadioConnectorCli (`main.cpp`, `session.cpp`), settings, the OS layer (`backend.cpp`), test cases |
-| `src/Radio/` | The modems (minimodem and direwolf command lines and configs, Baudot audio) and CAT radio control |
+| `src/Radio/` | direwolf's command lines and config, test audio (`fsk.cpp`), and CAT radio control |
 | `src/Connector/` | RadioConnector (`radio_connector.cpp`), its ack engine (`connector.cpp`), config, and AX.25/KISS (`packet.cpp`) |
 | `src/Bluetooth/` | Bluetooth audio: the radio's protocol (`bt_protocol.cpp`), connections (`rfcomm_*`), the virtual sound card (`virtual_audio_*`) and the bridge (`bt_audio.cpp`) |
 | `src/third_party/` | nlohmann/json and Google's libsbc, copied in |
@@ -157,10 +153,10 @@ Source layout:
 `RadioTests` runs every test with no arguments (`ctest` runs it too). A group that can't
 run on this computer is skipped, not failed:
 
-- `unit`: settings, command lines, Baudot, AX.25/KISS, FX.25, scoring, the connector's
-  protocol and ack logic
-- `audio`: decodes each file in `src/tests/audio` (RTTY, Bell202, packet recordings and
-  calibration tones; see its README) and checks the text. Skipped without minimodem or atest
+- `unit`: settings, command lines, AX.25/KISS, FX.25, scoring, the connector's protocol and
+  ack logic, the Bluetooth protocol
+- `audio`: decodes each packet recording in `src/tests/audio` (see its README) and checks
+  the text. Skipped without atest
 - `cat`: frequency, mode and PTT through Hamlib's dummy rig. `--cat-port COM5` tests a
   real radio instead (it is keyed for half a second)
 - `air`: starts RadioConnector and a stand-in station on the sound cards from
