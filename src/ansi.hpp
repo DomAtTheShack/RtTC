@@ -1,4 +1,4 @@
-// ansi.hpp - Terminal colors, menus and text input. Escape codes are skipped when stdout
+// Terminal colors, menus and text input. Escape codes are skipped when stdout
 // isn't a terminal or NO_COLOR is set.
 #pragma once
 
@@ -43,7 +43,7 @@ inline Style operator|(Style a, Style b) {
     return static_cast<Style>(static_cast<unsigned>(a) | static_cast<unsigned>(b));
 }
 
-// ---- Enable / disable --------------------------------------------------------
+// Enable / disable
 
 inline bool& enabledFlag() {
     static bool enabled = [] {
@@ -62,7 +62,7 @@ inline void esc(const char* seq) {
     if (enabled()) std::fputs(seq, stdout);
 }
 
-// ---- Colors and styles -------------------------------------------------------
+// Colors and styles
 
 inline void reset() { esc("\033[0m"); }
 
@@ -86,7 +86,7 @@ inline void setStyle(Style style) {
     if (style & Inverse)   esc("\033[7m");
 }
 
-// ---- Printing (printf-style) -------------------------------------------------
+// Printing (printf-style)
 
 inline void vprint(Color fg, Style style, const char* fmt, va_list args) {
     setColor(fg);
@@ -111,7 +111,7 @@ inline void print(Color fg, Style style, const char* fmt, ...) {
     va_end(args);
 }
 
-// ---- Screen and cursor -------------------------------------------------------
+// Screen and cursor
 
 inline void clearScreen() { esc("\033[2J\033[H"); }  // Clear and move cursor to top-left
 inline void clearLine()   { esc("\033[2K\r"); }      // Clear current line, cursor to column 1
@@ -127,7 +127,7 @@ inline void showCursor() { esc("\033[?25h"); }
 
 inline void flush() { std::fflush(stdout); }
 
-// ---- Keyboard input ----------------------------------------------------------
+// Keyboard input
 
 // Raw mode: keys arrive one at a time, without waiting for Enter and without echo
 inline void setRawMode(bool enable) { os::setRawMode(enable); }
@@ -198,7 +198,7 @@ inline void waitKey(const char* message = "Press any key") {
     setRawMode(false);                // Also turns the interrupt key back on
 }
 
-// ---- Selection menu ----------------------------------------------------------
+// Selection menu
 
 inline const char* toCStr(const char* s)        { return s; }
 inline const char* toCStr(const std::string& s) { return s.c_str(); }
@@ -333,7 +333,7 @@ inline int select(const std::string& title, std::initializer_list<const char*> o
                       [&](int i) { return options.begin()[i]; }, initial, subtitle);
 }
 
-// ---- Text input --------------------------------------------------------------
+// Text input
 
 // Edits value. Enter saves (true), Esc cancels (false), Ctrl-U clears.
 inline bool inputLine(const std::string& title, const std::string& prompt, std::string& value) {

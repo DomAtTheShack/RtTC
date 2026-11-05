@@ -1,4 +1,4 @@
-// connector.h - The Radio Connector's message protocol (docs/connector-protocol.md).
+// The Radio Connector's message protocol (docs/connector-protocol.md).
 // No I/O here: the program passes in frames heard, requests from the main program and
 // the time, and the engine answers through two callbacks. That keeps it testable.
 #ifndef RTC_CONNECTOR_H
@@ -26,7 +26,7 @@ constexpr int protocolVersion = 1;
 constexpr int maxParts = 40;
 inline const std::string airTag = "RC1";
 
-// ---- Air format ----------------------------------------------------------------
+// Air format
 
 struct AirFrame {
     enum class Kind { Data, Ack, Result } kind = Kind::Data;
@@ -54,14 +54,14 @@ size_t partBytes(int fx25, size_t pathHops);
 std::vector<std::string> splitParts(std::string_view text, size_t maxBytes);
 bool validUtf8(std::string_view text);
 
-// ---- Suite envelope -------------------------------------------------------------
+// Suite envelope
 
 // {"v":1,"type":...,"id":...,"re":...,"body":...}. id and re may be null
 Json envelope(const std::string& type, Json body, Json id = nullptr, Json re = nullptr);
 Json errorEnvelope(const Json& re, const std::string& code, const std::string& message,
                    const std::string& field = "");
 
-// ---- Engine ----------------------------------------------------------------------
+// Engine
 
 struct Options {
     std::string callsign;            // Normalized

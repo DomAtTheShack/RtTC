@@ -10,7 +10,7 @@
 
 namespace bt {
 
-// ---- Services ------------------------------------------------------------------------
+// Services
 
 namespace {
 
@@ -56,7 +56,7 @@ std::string normalizeAddress(std::string_view text) {
     return buf;
 }
 
-// ---- Audio channel framing -------------------------------------------------------------
+// Audio channel framing
 
 Bytes audioFrame(uint8_t command, const uint8_t* payload, size_t size) {
     Bytes out;
@@ -106,7 +106,7 @@ std::vector<AudioFrame> AudioDeframer::feed(const uint8_t* data, size_t size) {
     return frames;
 }
 
-// ---- GAIA ------------------------------------------------------------------------------
+// GAIA
 
 Bytes gaiaFrame(uint16_t group, uint16_t command, const Bytes& data) {
     Bytes out = {0xff, 0x01, 0x00, static_cast<uint8_t>(data.size()),
@@ -155,7 +155,7 @@ int transmitting(const GaiaFrame& frame) {
     return (frame.data[1] & 0x40) ? 1 : 0;
 }
 
-// ---- SBC -------------------------------------------------------------------------------
+// SBC
 
 namespace {
 
@@ -243,7 +243,7 @@ std::vector<int16_t> SbcDecoder::decode(const uint8_t* data, size_t size) {
     return pcm;
 }
 
-// ---- Transmit -------------------------------------------------------------------------
+// Transmit
 
 Transmitter::Transmitter(int threshold, int holdMs, int leadMs)
     : threshold(threshold),

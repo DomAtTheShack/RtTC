@@ -1,4 +1,4 @@
-// fsk.h - Test audio (AX.25, tones, noise), made without direwolf so decoding it checks
+// Test audio (AX.25, tones, noise), made without direwolf so decoding it checks
 // we match it.
 #ifndef RTC_FSK_H
 #define RTC_FSK_H

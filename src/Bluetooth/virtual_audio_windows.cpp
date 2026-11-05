@@ -1,4 +1,4 @@
-// virtual_audio_windows.cpp - Windows has no virtual sound card of its own, so this uses a
+// Windows has no virtual sound card of its own, so this uses a
 // cable the user installs (e.g. VB-Cable, or VB-Cable A+B for both ways). The bridge plays
 // the radio's audio into one cable's input, where the modems hear it on its output, and
 // records the modems from a second cable's output. Untested on a radio.

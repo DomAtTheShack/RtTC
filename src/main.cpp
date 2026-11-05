@@ -1,4 +1,4 @@
-// main.cpp - Main menu, settings and test tools.
+// Main menu, settings and test tools.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -43,7 +43,7 @@ const ansi::Color warnColor  = ansi::Color::BrightYellow;
 const ansi::Color failColor  = ansi::Color::BrightRed;
 const ansi::Color dimColor   = ansi::Color::Gray;
 
-// ---- Helpers -------------------------------------------------------------------
+// Helpers
 
 void showMessage(const string& title, const string& text) {
     ansi::clearScreen();
@@ -87,7 +87,7 @@ bool pickOption(const string& title, const Option (&options)[N], float& value,
     return true;
 }
 
-// ---- Sound cards ----------------------------------------------------------------
+// Sound cards
 
 vector<os::AudioDevice> findAudioDevices(os::AudioDirection direction) {
     ansi::clearScreen();
@@ -139,7 +139,7 @@ std::optional<string> resolveAudioName(Settings& settings, bool playback) {
     return playback ? settings.txAudio : settings.rxAudio;
 }
 
-// ---- Bluetooth -----------------------------------------------------------------
+// Bluetooth
 
 // The radio's Bluetooth audio for one session (docs/bluetooth-audio.md). It never starts
 // in builds without Bluetooth
@@ -267,7 +267,7 @@ void pickBluetoothCable(Settings& settings, bool play) {
     if (choice >= 0) name = devices[choice].name;
 }
 
-// ---- Radio ---------------------------------------------------------------------
+// Radio
 
 string radioDescription(int model) {
     string name = radioName(model);
@@ -318,7 +318,7 @@ void unkeyAfterDirewolf(const Settings& settings) {
     }
 }
 
-// ---- Running -------------------------------------------------------------------
+// Running
 
 void printSessionHeader(const Settings& settings, bool onAir) {
     ansi::clearScreen();
@@ -515,7 +515,7 @@ void startSession(Settings& settings) {
     startPacketSession(settings);
 }
 
-// ---- Settings menu -------------------------------------------------------------
+// Settings menu
 
 // false on Esc
 bool pickRadio(Settings& settings) {
@@ -767,7 +767,7 @@ void settingsMenu(Settings& settings) {
     }
 }
 
-// ---- Test tools ----------------------------------------------------------------
+// Test tools
 
 void loopbackTest(const Settings& current) {
     Settings settings = current;

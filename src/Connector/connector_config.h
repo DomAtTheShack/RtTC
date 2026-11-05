@@ -1,4 +1,4 @@
-// connector_config.h - The Radio Connector's config as JSON, kept in settings.ini.
+// The Radio Connector's config as JSON, kept in settings.ini.
 #ifndef RTC_CONNECTOR_CONFIG_H
 #define RTC_CONNECTOR_CONFIG_H
 

@@ -23,7 +23,7 @@ option(RTC_TESTS "Build RadioTests and register it with ctest" ON)
 # libbluetooth and libpulse-simple (libbluetooth-dev libpulse-dev on Debian/Ubuntu)
 option(RTC_BLUETOOTH "Bluetooth audio for UV-Pro, GA-5WB and Vero radios" ON)
 
-# ---- Shared code ----------------------------------------------------------------------
+# Shared code
 
 # Everything except the menus and the radio, shared by the programs and the tests
 add_library(rtc_core STATIC
@@ -141,7 +141,7 @@ else()
             INTERFACE_INCLUDE_DIRECTORIES ${HAMLIB_INCLUDE_DIR})
 endif()
 
-# ---- Programs -----------------------------------------------------------------------
+# Programs
 
 set(CAT_SOURCES "src/Radio/cat.cpp" "src/Radio/cat.h")
 
@@ -174,7 +174,7 @@ add_custom_command(TARGET RadioConnectorCli POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/src/tests/audio
                 $<TARGET_FILE_DIR:RadioConnectorCli>/test-audio)
 
-# ---- direwolf for Windows -------------------------------------------------------------
+# direwolf for Windows
 
 # The official Windows download has no Hamlib, so it couldn't key the radio over CAT; this
 # builds direwolf (plus atest and gen_packets, for audio files) from source against the
@@ -211,7 +211,7 @@ if(WIN32 AND RTC_DIREWOLF)
             BUILD_BYPRODUCTS ${DIREWOLF_OUTPUTS})
 endif()
 
-# ---- Linking and the files each program needs next to it ----------------------------
+# Linking and the files each program needs next to it
 
 foreach(program ${RTC_PROGRAMS})
     if(WIN32)

@@ -1,4 +1,4 @@
-// virtual_audio.h - The sound card direwolf (and the tuning tone) use in Bluetooth mode.
+// The sound card direwolf (and the tuning tone) use in Bluetooth mode.
 //   Linux, macOS  Two PulseAudio (or PipeWire) null sinks the bridge makes:
 //                   rtc_bt_rx  the bridge plays the radio's audio in; modems record its monitor
 //                   rtc_bt_tx  modems play in; the bridge records its monitor and sends it

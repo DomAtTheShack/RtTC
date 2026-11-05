@@ -88,7 +88,7 @@ bool allTrue(const std::vector<bool>& flags) {
 
 } // namespace
 
-// ---- Air format ----------------------------------------------------------------
+// Air format
 
 std::string hexId(unsigned id) {
     char buf[8];
@@ -217,7 +217,7 @@ bool validUtf8(std::string_view text) {
     return true;
 }
 
-// ---- Suite envelope -------------------------------------------------------------
+// Suite envelope
 
 Json envelope(const std::string& type, Json body, Json id, Json re) {
     Json out = {{"v", protocolVersion}, {"type", type}};
@@ -234,7 +234,7 @@ Json errorEnvelope(const Json& re, const std::string& code, const std::string& m
     return envelope("error", std::move(body), nullptr, re);
 }
 
-// ---- Engine ----------------------------------------------------------------------
+// Engine
 
 Engine::Engine(Hooks hooks, unsigned firstId) : hooks(std::move(hooks)), nextId(firstId & 0xFFF) {}
 
