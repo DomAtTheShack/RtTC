@@ -1,16 +1,10 @@
 name: Build
 
-# Pushes to master and PRs build all three platforms. Other branches build through their
-# PR, so a push to a PR's branch runs once, not twice; a branch without a PR builds with
-# "Run workflow". Every push to master, every night (when there are new commits) and "Run
-# workflow" also publish the builds as the "nightly" GitHub release, replacing the last
-# one. Nothing is published unless all three pass.
+# Archived minimodem + AX.25 version. It is never merged back into master.
+# "Run workflow" on this branch builds all three platforms and publishes them as the
+# "minimodem-archive" pre-release, replacing the last one. Nothing is published unless
+# all three pass. The nightly release belongs to master and isn't touched from here.
 on:
-  push:
-    branches: [master]
-  pull_request:
-  schedule:
-    - cron: "0 7 * * *"          # 07:00 UTC = 3 am Eastern (2 am in winter)
   workflow_dispatch:
 
 permissions:
@@ -18,38 +12,24 @@ permissions:
 
 concurrency:
   group: build-${{ github.ref }}
-  # A newer push replaces a running PR build, but never cuts a nightly release short
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   HAMLIB_VERSION: "4.7.2"
   DIREWOLF_VERSION: "1.8.1"
 
 jobs:
-  # Decides whether this run publishes the nightly. The scheduled run skips it when
-  # nothing was committed since the last one
+  # Publishes only when "Run workflow" was started on this branch
   changes:
-    name: Check for new commits
+    name: Check what to publish
     runs-on: ubuntu-24.04
     outputs:
       release: ${{ steps.check.outputs.release }}
     steps:
       - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.ref }}" = "refs/heads/archive/minimodem" ]; then
             echo "release=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/master" ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "schedule" ]; then
-            last=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" --jq .object.sha 2>/dev/null || true)
-            if [ "$last" = "${{ github.sha }}" ]; then
-              echo "No new commits since the last nightly"
-              echo "release=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "release=true" >> "$GITHUB_OUTPUT"
-            fi
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
           fi
@@ -261,7 +241,7 @@ jobs:
           path: dist/Radio-to-Text-Connector-macos-arm64.tar.gz
 
   release:
-    name: Publish nightly release
+    name: Publish minimodem pre-release
     needs: [changes, windows, linux, macos]
     if: needs.changes.outputs.release == 'true'
     runs-on: ubuntu-24.04
@@ -271,7 +251,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publish nightly release
+      - name: Publish minimodem pre-release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -280,7 +260,8 @@ jobs:
           short=$(echo "${{ github.sha }}" | cut -c1-7)
           today=$(date -u +%Y-%m-%d)
           cat > notes.md <<EOF
-          Automatic build of \`${short}\` from ${today}. Untested; may be broken.
+          Archived minimodem + AX.25 version, built from \`${short}\` on ${today}. This version
+          is no longer developed; the current version (AX.25 only) is the nightly release.
 
           **Windows:** unzip and run \`RadioConnectorCli.exe\`. Keep the DLLs and the
           direwolf programs next to it (direwolf is included, built with Hamlib). minimodem
@@ -295,10 +276,11 @@ jobs:
           then \`tar xzf\` and \`./RadioConnectorCli\`. If macOS blocks it, run
           \`xattr -d com.apple.quarantine RadioConnectorCli RadioConnector RadioTests\` first.
           EOF
-          # Replace the previous nightly (release and tag) with this one
-          gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly dist/* \
+          # Replace the previous archive build (release and tag) with this one
+          gh release delete minimodem-archive --cleanup-tag --yes || true
+          gh release create minimodem-archive dist/* \
             --target "${{ github.sha }}" \
             --prerelease \
-            --title "Nightly ${today} (${short})" \
+            --latest=false \
+            --title "Minimodem + AX.25 (archived) ${today} (${short})" \
             --notes-file notes.md
