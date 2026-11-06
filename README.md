@@ -68,9 +68,11 @@ with 64 check bytes), so long lines take more packets.
 
 `RadioConnector --main 127.0.0.1:9000` runs headless: it connects one radio (direwolf,
 AX.25 with FX.25) to the suite's main program, which sends it text and config as JSON
-lines over TCP. The connector delivers the text to another station's connector, splitting
-it into parts, with acks and retries, and reports each message's state. The main program
-never deals with the radio: every connector speaks the same JSON, whatever it connects to.
+lines over TCP. The main way in is **AX.25 connected mode**: any packet station can
+connect and chat, several at once, with long replies paged
+([docs/connected-mode.md](docs/connected-mode.md)). The older `RC1` messages between
+connectors still work for now, and will be removed. The main program never deals with
+the radio: every connector speaks the same JSON, whatever it connects to.
 
 - It dials the main program and retries every 5 s; the radio keeps running meanwhile. Pick a
   port nothing else uses (8080 is often a web server's).
@@ -84,7 +86,7 @@ never deals with the radio: every connector speaks the same JSON, whatever it co
 | --- | --- |
 | `--main host:port` | Where the main program listens (saved in `connector.ini`) |
 | `--settings file` | Use this settings file instead of `connector.ini` |
-| `--verbose` | Log every frame sent (`tx`) and heard (`rx`), and every JSON line (`to main`, `from main`) |
+| `--verbose` | Log every frame sent (`tx`) and heard (`rx`), every session frame (`agw out`, `agw in`), and every JSON line (`to main`, `from main`) |
 | `--direwolf` | Also show direwolf's own output, as `direwolf:` lines |
 | `--quit-on-disconnect` | Exit when the main program hangs up (RadioTests uses it) |
 
@@ -92,6 +94,8 @@ Logs go to stderr.
 
 ### Docs
 
+- [docs/connected-mode.md](docs/connected-mode.md): connected-mode sessions, how several
+  users share the channel, and the plan for removing `RC1`.
 - [docs/connector-protocol.md](docs/connector-protocol.md): the protocol. JSON between the
   main program and a connector, and the `RC1` air format between connectors.
 - [docs/json-format.md](docs/json-format.md): the JSON format, message by message and field

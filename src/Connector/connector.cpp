@@ -29,19 +29,6 @@ Clock::duration toDuration(double seconds) {
     return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(seconds));
 }
 
-std::string utcNow() {
-    std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm tm{};
-#ifdef _WIN32
-    gmtime_s(&tm, &t);
-#else
-    gmtime_r(&t, &tm);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm);
-    return buf;
-}
-
 std::optional<int> parseNumber(std::string_view text, int low, int high) {
     if (text.empty() || text.size() > 4) return std::nullopt;
     int value = 0;
@@ -87,6 +74,19 @@ bool allTrue(const std::vector<bool>& flags) {
 }
 
 } // namespace
+
+std::string utcNow() {
+    std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buf;
+}
 
 // Air format
 
@@ -190,6 +190,10 @@ size_t partBytes(int fx25, size_t pathHops) {
     // maxInfoFor assumes no path; with FX.25 each digipeater takes room in the block
     if (fx25 > 0) info -= std::min(info / 2, pathHops * addressBytes);
     return info - dataHeaderBytes;
+}
+
+size_t connectedChunkBytes(int fx25, size_t pathHops) {
+    return partBytes(fx25, pathHops) + dataHeaderBytes;
 }
 
 std::vector<std::string> splitParts(std::string_view text, size_t maxBytes) {
@@ -316,7 +320,8 @@ void Engine::mainAck(const Json& re, TimePoint now) {
 }
 
 void Engine::onFrame(const packet::Frame& frame, TimePoint now) {
-    if (frame.destination != opts.callsign) return;
+    // Only UI frames: an I frame is a connected session's text, which could start with RC1|
+    if (!frame.ui || frame.destination != opts.callsign) return;
     auto air = parseAir(frame.info);
     if (!air) return;
     heard = std::chrono::system_clock::now();

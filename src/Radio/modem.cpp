@@ -63,7 +63,7 @@ std::string direwolfDevice(const std::string& name, bool playback) {
 }
 
 std::string direwolfConfig(const Settings& s, const std::string& rxDevice,
-                           const std::string& txDevice, int kissPort) {
+                           const std::string& txDevice, int kissPort, int agwPort, int paclen) {
     std::string call = s.callsign.empty() ? "N0CALL" : s.callsign;
     std::string config =
         "# Temporary config written by Radio to Text Connector\n"
@@ -90,8 +90,9 @@ std::string direwolfConfig(const Settings& s, const std::string& rxDevice,
             config += "PTT " + s.keyingPort() + (s.ptt == PttType::Rts ? " RTS\n" : " DTR\n");
             break;
     }
+    config += "AGWPORT " + std::to_string(agwPort > 0 ? agwPort : 0) + "\n";
+    if (agwPort > 0 && paclen > 0) config += "PACLEN " + std::to_string(paclen) + "\n";
     config +=
-        "AGWPORT 0\n"
         "KISSPORT 0\n"
         "KISSPORT " + std::to_string(kissPort) + "\n";
     return config;

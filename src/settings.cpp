@@ -176,6 +176,11 @@ std::string formatSettings(const Settings& s) {
     out << "retry_extra_wait=" << s.retryExtraWait << "\n";
     out << "hold_for_main=" << s.holdForMain << "\n";
     out << "main=" << s.mainAddress << "\n";
+    out << "connected=" << (s.connectedEnabled ? "on" : "off") << "\n";
+    out << "max_sessions=" << s.maxSessions << "\n";
+    out << "idle_minutes=" << s.idleMinutes << "\n";
+    out << "page_bytes=" << s.pageBytes << "\n";
+    out << "busy_text=" << s.busyText << "\n";
     out << "send_to=" << s.sendTo << "\n";
     return out.str();
 }
@@ -241,6 +246,14 @@ Settings parseSettings(const std::string& text) {
         else if (key == "retry_extra_wait") toInt(value, 0, 600, s.retryExtraWait);
         else if (key == "hold_for_main")    toInt(value, 0, 86400, s.holdForMain);
         else if (key == "main")             s.mainAddress = value;
+        else if (key == "connected")        s.connectedEnabled = value == "on";
+        else if (key == "max_sessions")     toInt(value, 1, 16, s.maxSessions);
+        else if (key == "idle_minutes")     toInt(value, 0, 1440, s.idleMinutes);
+        else if (key == "page_bytes") {
+            int bytes = 0;
+            if (toInt(value, 0, 65536, bytes) && (bytes == 0 || bytes >= 200)) s.pageBytes = bytes;
+        }
+        else if (key == "busy_text" && !value.empty() && value.size() <= 200) s.busyText = value;
         else if (key == "send_to")          s.sendTo = value;
     }
     // Files from before ptt= keyed over CAT whenever a CAT port was set

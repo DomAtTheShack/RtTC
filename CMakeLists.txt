@@ -35,6 +35,8 @@ add_library(rtc_core STATIC
         src/Connector/packet.cpp src/Connector/packet.h
         src/Connector/connector.cpp src/Connector/connector.h
         src/Connector/connector_config.cpp src/Connector/connector_config.h
+        src/Connector/agw.cpp src/Connector/agw.h
+        src/Connector/sessions.cpp src/Connector/sessions.h
         src/Bluetooth/bt_protocol.cpp src/Bluetooth/bt_protocol.h)
 # third_party: nlohmann/json, copied in so builds don't need internet access
 target_include_directories(rtc_core PUBLIC ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/third_party)
