@@ -50,6 +50,12 @@ struct Settings {
     int retryExtraWait = 10;         // Seconds to wait for an ack, on top of the airtime
     int holdForMain = 180;           // Seconds a received message waits for the main program
     std::string mainAddress;         // host:port of the main program
+    // Connected mode (docs/connected-mode.md): the main way in. RC1 stays for now
+    bool connectedEnabled = true;
+    int maxSessions = 4;
+    int idleMinutes = 10;            // 0 = never
+    int pageBytes = 1024;            // 0 = no paging
+    std::string busyText = "Busy, try again in a few minutes";
 
     // Interactive program only: who typed packets go to. Empty = CQ
     std::string sendTo;

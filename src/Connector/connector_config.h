@@ -1,4 +1,4 @@
-// The Radio Connector's config as JSON, kept in settings.ini.
+// The Radio Connector's config as JSON, kept in connector.ini.
 #ifndef RTC_CONNECTOR_CONFIG_H
 #define RTC_CONNECTOR_CONFIG_H
 
@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include "connector.h"
+#include "sessions.h"
 #include "../settings.h"
 
 namespace connector {
@@ -31,6 +32,9 @@ std::string missingConfig(const Settings& settings);
 bool parseHostPort(const std::string& text, std::string& host, int& port);
 
 Options engineOptions(const Settings& settings);
+SessionOptions sessionOptions(const Settings& settings);
+// direwolf's PACLEN for connected mode: the largest I frame that fits one FX.25 block
+int direwolfPaclen(const Settings& settings);
 
 } // namespace connector
 

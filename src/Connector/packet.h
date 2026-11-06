@@ -28,6 +28,7 @@ struct Frame {
     std::string destination;
     std::vector<std::string> path;   // Digipeaters; "*" marks one that has repeated it
     std::string info;
+    bool ui = true;                  // false: an I frame (connected mode)
 };
 
 // Without the FCS. Callsigns must be normalized. path: digipeaters, at most 8
