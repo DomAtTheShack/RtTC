@@ -121,6 +121,9 @@ std::string playTone(const std::string& device, const std::vector<int16_t>& seco
 // Serial ports
 
 std::vector<std::string> listSerialPorts();
+// The serial port of a plugged-in USB device with this vendor and product ID, e.g.
+// /dev/ttyACM0 or COM7. "" if there's none
+std::string findUsbSerialPort(uint16_t vendorId, uint16_t productId);
 
 // Files
 

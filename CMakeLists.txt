@@ -31,6 +31,7 @@ add_library(rtc_core STATIC
         src/settings.cpp src/settings.h
         src/testcases.cpp src/testcases.h
         "src/Radio/modem.cpp" "src/Radio/modem.h"
+        "src/Radio/aioc.cpp" "src/Radio/aioc.h"
         "src/Radio/fsk.cpp" "src/Radio/fsk.h"
         src/Connector/packet.cpp src/Connector/packet.h
         src/Connector/connector.cpp src/Connector/connector.h
@@ -60,8 +61,9 @@ elseif(APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBPULSE REQUIRED IMPORTED_TARGET libpulse libpulse-simple)
     target_link_libraries(rtc_core PUBLIC PkgConfig::LIBPULSE)
-    # CoreAudio: the default sound card's name, for direwolf's ADEVICE
-    target_link_libraries(rtc_core PUBLIC "-framework CoreAudio" "-framework CoreFoundation")
+    # CoreAudio: sound card names for direwolf's ADEVICE. IOKit: finding a USB serial port
+    target_link_libraries(rtc_core PUBLIC "-framework CoreAudio" "-framework CoreFoundation"
+            "-framework IOKit")
 else()
     find_package(ALSA REQUIRED)
     target_link_libraries(rtc_core PUBLIC ALSA::ALSA)

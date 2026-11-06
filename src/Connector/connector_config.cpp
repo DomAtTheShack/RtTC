@@ -26,10 +26,11 @@ Json radioToJson(const Settings& s) {
     return {{"type", "cat"}, {"port", s.catPort}, {"baud", s.catBaud}, {"rigModel", s.rigModel}};
 }
 
-// port: the RTS/DTR serial port. "" = the radio's CAT port
+// port: the RTS/DTR serial port ("" = the radio's CAT port), or the AIOC cable's port
+// when last found
 Json pttToJson(const Settings& s) {
     Json ptt = {{"type", pttKey(s.ptt)}};
-    if (s.ptt == PttType::Rts || s.ptt == PttType::Dtr) ptt["port"] = s.pttPort;
+    if (s.ptt == PttType::Rts || s.ptt == PttType::Dtr || s.ptt == PttType::Aioc) ptt["port"] = s.pttPort;
     return ptt;
 }
 
@@ -214,22 +215,25 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
                 return fail("radio.type", "must be none, cat or rigctld");
             }
         } else if (key == "ptt") {
-            // How to key: vox, cat (a command to the radio), or rts/dtr on a serial port
+            // How to key: vox, cat (a command to the radio), rts/dtr on a serial port, or an
+            // AIOC cable, whose port and sound card are found when the radio starts
             if (!value.is_object()) return fail(key, "must be an object");
             for (const auto& [field, fieldValue] : value.items())
                 if (field != "type" && field != "port") return fail("ptt." + field, "unknown setting");
             if (value.contains("type")) {
                 if (!value["type"].is_string() || !parsePttKey(value["type"].get<std::string>(), s.ptt))
-                    return fail("ptt.type", "must be vox, cat, rts or dtr");
+                    return fail("ptt.type", "must be vox, cat, rts, dtr or aioc");
             }
             bool line = s.ptt == PttType::Rts || s.ptt == PttType::Dtr;
             if (value.contains("port")) {
+                if (s.ptt == PttType::Aioc)
+                    return fail("ptt.port", "isn't used with aioc: the cable's port is found when the radio starts");
                 if (!line) return fail("ptt.port", "is only for rts and dtr (cat keys through the radio port)");
                 if (!value["port"].is_string())
                     return fail("ptt.port", "must be a serial port, e.g. COM6, or \"\" for the radio's port");
                 s.pttPort = value["port"].get<std::string>();
             }
-            if (!line) s.pttPort.clear();
+            if (!line && s.ptt != PttType::Aioc) s.pttPort.clear();
         } else if (key == "retry") {
             if (!value.is_object()) return fail(key, "must be an object");
             for (const auto& [field, fieldValue] : value.items()) {
@@ -280,6 +284,8 @@ std::string missingConfig(const Settings& s) {
     // Bluetooth on Linux and macOS brings its own sound card; on Windows it needs both
     // ends of the virtual cables
     if (!s.bluetooth.empty() && !bluetoothUsesSavedAudio()) return "";
+    // The AIOC cable's sound card is found when the radio starts
+    if (s.ptt == PttType::Aioc) return "";
     if (s.rxAudio.empty()) return "rxAudio";
     if (s.txAudio.empty()) return "txAudio";
     if (!s.bluetooth.empty() && s.btPlayAudio.empty()) return "bluetooth.playAudio";

@@ -54,7 +54,7 @@ size_t partBytes(int fx25, size_t pathHops);
 std::vector<std::string> splitParts(std::string_view text, size_t maxBytes);
 bool validUtf8(std::string_view text);
 
-// Suite envelope
+// Envelope
 
 // {"v":1,"type":...,"id":...,"re":...,"body":...}. id and re may be null
 Json envelope(const std::string& type, Json body, Json id = nullptr, Json re = nullptr);

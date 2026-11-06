@@ -6,7 +6,7 @@ over the air, with no main program needed. How the ACKs work is in [ack-guide.md
 ## Setup
 
 The menu program and the Radio Connector are two different stations: the menu uses
-`settings.ini` (e.g. `N8GM`) and the connector uses `connector.ini` (e.g. `N8GM-1`). Both share
+`settings.ini` (e.g. `N0CALL`) and the connector uses `connector.ini` (e.g. `N0CALL-1`). Both share
 the sound card or VB-Cable, so each hears the other.
 
 1. Start the connector: `RadioConnector --verbose`. On its first run it creates `connector.ini`
@@ -17,8 +17,8 @@ the sound card or VB-Cable, so each hears the other.
    there accepts the connection but never acks, so every message ends in `EXP`.)
 3. In the menu program, open Settings and set **Mode** to Duplex, so you can type and also see
    the replies.
-4. Set **Send to** to the connector's callsign (`N8GM-1`). The session header then shows
-   `Sending to N8GM-1`. Leave it empty to go back to CQ.
+4. Set **Send to** to the connector's callsign (`N0CALL-1`). The session header then shows
+   `Sending to N0CALL-1`. Leave it empty to go back to CQ.
 5. Start the session, type a test line from the table below, and press Enter. Each line you
    type becomes one packet.
 
@@ -38,7 +38,7 @@ Every field is split by `|`, and the text is always last.
 | `2/3` | Part / total | Part 1–total, total 1–40. Every part of one message must give the same total |
 | `text` | Text | Anything; may contain `\|`. Parts are joined with nothing in between, so end a part with a space if you want one |
 
-| Comes back (shown as `N8GM-1>N8GM:`) | Meaning |
+| Comes back (shown as `N0CALL-1>N0CALL:`) | Meaning |
 | --- | --- |
 | `RC1\|A\|002\|1,3` | ACK: has parts 1 and 3 of message 002 |
 | `RC1\|A\|002\|1-3` | ACK: has parts 1 to 3 |
@@ -66,27 +66,27 @@ order: tests 4 and 12 build on earlier ones.
 | 8 | Unknown kind | `RC1\|X\|bad` | Nothing |
 | 9 | Bad ID | `RC1\|D\|0G1\|1/1\|x` | Nothing (`G` isn't hex) |
 | 10 | Part past total | `RC1\|D\|006\|3/2\|x` | Nothing |
-| 11 | Wrong station | Set Send to empty (CQ), then `RC1\|D\|007\|1/1\|x` | Nothing: it isn't addressed to N8GM-1 |
+| 11 | Wrong station | Set Send to empty (CQ), then `RC1\|D\|007\|1/1\|x` | Nothing: it isn't addressed to N0CALL-1 |
 | 12 | Reused ID | Within 10 min of test 1 finishing: `RC1\|D\|001\|1/1\|Hello again` | The ACK and result again, but the new text is not delivered: it counts as a repeat of message 001 |
 
 ## Reading the results
 
-In the menu program, replies show as `N8GM-1>N8GM: RC1|A|…`. The `>N8GM` part appears whenever
+In the menu program, replies show as `N0CALL-1>N0CALL: RC1|A|…`. The `>N0CALL` part appears whenever
 a packet isn't addressed to CQ, so you can tell an ACK from ordinary traffic. Your own sent lines
-show as `N8GM>N8GM-1:`.
+show as `N0CALL>N0CALL-1:`.
 
 In the connector's `--verbose` window, a working test reads like this (from a run on
 2026-10-29, with a stand-in main program that acked):
 
 ```
-12:08:27 rx N8GM>N8GM-1: RC1|D|002|1/3|one
-12:08:28 rx N8GM>N8GM-1: RC1|D|002|3/3|three
-12:08:30 tx N8GM-1>N8GM: RC1|A|002|1,3
-12:08:38 rx N8GM>N8GM-1: RC1|D|002|2/3|two
-12:08:38 tx N8GM-1>N8GM: RC1|A|002|1-3
+12:08:27 rx N0CALL>N0CALL-1: RC1|D|002|1/3|one
+12:08:28 rx N0CALL>N0CALL-1: RC1|D|002|3/3|three
+12:08:30 tx N0CALL-1>N0CALL: RC1|A|002|1,3
+12:08:38 rx N0CALL>N0CALL-1: RC1|D|002|2/3|two
+12:08:38 tx N0CALL-1>N0CALL: RC1|A|002|1-3
 12:08:38 to main: {"type":"message.received", ... "text":"one two three"}
 12:08:38 from main: {"type":"ack","re":"c-1"}
-12:08:38 tx N8GM-1>N8GM: RC1|R|002|OK
+12:08:38 tx N0CALL-1>N0CALL: RC1|R|002|OK
 ```
 
 | Line | Meaning |

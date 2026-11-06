@@ -62,19 +62,60 @@ std::string defaultCoreAudioName(bool playback) {
     return ok ? buffer : "";
 }
 
+// Name of the first input or output device whose name contains text. Empty if none
+std::string coreAudioNameContaining(const std::string& text, bool playback) {
+    AudioObjectPropertyAddress address = {kAudioHardwarePropertyDevices,
+                                          kAudioObjectPropertyScopeGlobal,
+                                          kAudioObjectPropertyElementMain};
+    UInt32 size = 0;
+    if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size) != noErr)
+        return "";
+    std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size,
+                                   devices.data()) != noErr)
+        return "";
+    for (AudioDeviceID device : devices) {
+        // Only devices with streams the right way
+        AudioObjectPropertyAddress streams = {
+            kAudioDevicePropertyStreams,
+            playback ? kAudioObjectPropertyScopeOutput : kAudioObjectPropertyScopeInput,
+            kAudioObjectPropertyElementMain};
+        UInt32 streamsSize = 0;
+        if (AudioObjectGetPropertyDataSize(device, &streams, 0, nullptr, &streamsSize) != noErr ||
+            streamsSize == 0)
+            continue;
+        AudioObjectPropertyAddress nameAddress = {kAudioObjectPropertyName,
+                                                  kAudioObjectPropertyScopeGlobal,
+                                                  kAudioObjectPropertyElementMain};
+        CFStringRef cfName = nullptr;
+        UInt32 nameSize = sizeof cfName;
+        if (AudioObjectGetPropertyData(device, &nameAddress, 0, nullptr, &nameSize, &cfName) != noErr ||
+            !cfName)
+            continue;
+        char buffer[256] = {};
+        bool ok = CFStringGetCString(cfName, buffer, sizeof buffer, kCFStringEncodingUTF8);
+        CFRelease(cfName);
+        if (ok && std::string(buffer).find(text) != std::string::npos) return buffer;
+    }
+    return "";
+}
+
 } // namespace
 #endif
 
-std::string direwolfDevice(const std::string& name, bool playback) {
+std::string direwolfDevice(const std::string& name, bool playback, bool aiocCable) {
 #ifdef __APPLE__
     // direwolf's PortAudio build only takes exact device names; "default" matches nothing.
-    // The app's names are PulseAudio's, so use the system default device's CoreAudio name
+    // The app's names are PulseAudio's, so use the CoreAudio name of the AIOC cable, or
+    // else of the system default device
     (void)name;
-    std::string device = defaultCoreAudioName(playback);
+    std::string device = aiocCable ? coreAudioNameContaining("All-In-One-Cable", playback) : "";
+    if (device.empty()) device = defaultCoreAudioName(playback);
     // Quoted: Mac names have spaces, which would split the ADEVICE line
     return device.empty() ? "default" : "\"" + device + "\"";
 #else
     (void)playback;
+    (void)aiocCable;
     // Windows: WinMM index. Linux: ALSA name
     return name.empty() ? "default" : name;
 #endif
@@ -107,8 +148,13 @@ std::string direwolfConfig(const Settings& s, const std::string& rxDevice,
             break;
         case PttType::Rts:
         case PttType::Dtr:
-            // The CAT port's own line, or a second port (e.g. the FTDX3000's Standard port)
+            // The CAT port's own line, or a second serial port (some radios' USB connection has two)
             config += "PTT " + s.keyingPort() + (s.ptt == PttType::Rts ? " RTS\n" : " DTR\n");
+            break;
+        case PttType::Aioc:
+            // Transmit with DTR on and RTS off. "-RTS" holds RTS on the rest of the time, so
+            // the cable never keys by itself
+            config += "PTT " + s.keyingPort() + " DTR -RTS\n";
             break;
     }
     config +=

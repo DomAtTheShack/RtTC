@@ -96,12 +96,13 @@ const char* pttKey(PttType ptt) {
         case PttType::Cat: return "cat";
         case PttType::Rts: return "rts";
         case PttType::Dtr: return "dtr";
+        case PttType::Aioc: return "aioc";
     }
     return "vox";
 }
 
 bool parsePttKey(const std::string& text, PttType& ptt) {
-    for (PttType type : {PttType::Vox, PttType::Cat, PttType::Rts, PttType::Dtr}) {
+    for (PttType type : {PttType::Vox, PttType::Cat, PttType::Rts, PttType::Dtr, PttType::Aioc}) {
         if (text == pttKey(type)) {
             ptt = type;
             return true;
@@ -141,6 +142,9 @@ std::string pttProblem(const Settings& s) {
             if (s.keyingPort().empty()) return "RTS/DTR PTT needs a serial port";
             if (s.pttPort.empty() && s.rigModel == ownRigctldModel)
                 return "RTS/DTR PTT needs a serial port, not a rigctld address";
+            return "";
+        case PttType::Aioc:
+            // The cable's port is found when it starts
             return "";
     }
     return "";

@@ -1,26 +1,37 @@
-## Radio to Text Connector
+## Radio to Text Connector (RtTC)
 
 Send and receive text over ham radio as AX.25 packets, through direwolf: 300, 1200 or
 9600 baud, with FX.25 error correction. One packet per line, with your callsign and error
 checking.
 
-The minimodem version (RTTY and Bell202 as well) is kept on the `archive/minimodem`
-branch. It's frozen and doesn't merge back.
+RtTC is the radio side of a larger system. A separate program, called the **main
+program** in these docs (not released yet), handles the messages; it hands text to
+`RadioConnector`, which sends it over the air to another station and reports back. The
+main program never touches the radio. Any program that speaks the JSON protocol in
+[docs/json-format.md](docs/json-format.md) can take its place, and `RadioConnectorCli`
+works on its own without one.
 
-PTT is VOX, a CAT command (Hamlib), or the RTS/DTR line of a serial port, which can be a
-second port (e.g. the FTDX3000's Standard port). Common Icom, Yaesu, Kenwood, Elecraft and
-Xiegu radios are listed; any other Hamlib model works by number, or through `rigctld`.
+RTTY isn't supported. An older, unmaintained version that does RTTY through minimodem
+is on the `archive/minimodem` branch.
 
-Radios with Bluetooth audio (BTech UV-Pro and UV-50Pro, Radioddity GA-5WB, Vero
-VR-N75/N76/N7500/N7600) can skip the sound card and cable: set **Bluetooth radio** in
-Settings ([docs/bluetooth-audio.md](docs/bluetooth-audio.md)).
+PTT is VOX, a CAT command (Hamlib), or the RTS/DTR line of a serial port. That can be a
+second port: some radios' USB connection shows two serial ports, one for CAT and one for
+PTT. An AIOC cable (for handhelds with a Kenwood-style K plug, such as Baofengs) does PTT
+and audio in one: pick **AIOC cable** in Settings > PTT, and its serial port and sound card
+are found for you ([docs/radios.md](docs/radios.md#aioc-cable)). The Settings menu lists common Icom, Yaesu, Kenwood, Elecraft and Xiegu radios; any
+other Hamlib model works by its number, or through `rigctld`. Which radios are tested, which
+should work and which setups won't: [docs/radios.md](docs/radios.md).
+
+Radios with Bluetooth audio (BTech UV-Pro and UV-50Pro, Radioddity GA-5WB and DB50-B
+Mini, Vero VR-N75/N76/N7500/N7600) can skip the sound card and cable: set **Bluetooth
+radio** in Settings ([docs/bluetooth-audio.md](docs/bluetooth-audio.md)).
 
 ### The programs
 
 | Program | What it is |
 | --- | --- |
 | `RadioConnectorCli` | The menu program: pick settings, then send and receive text by hand. Also the tool for testing a connector over the air |
-| `RadioConnector` | Headless: connects one radio to the suite's main program, with acks and retries ([below](#radioconnector)) |
+| `RadioConnector` | Headless: connects one radio to the main program, with acks and retries ([below](#radioconnector)) |
 | `RadioTests` | Every test, run with no arguments ([below](#tests)) |
 
 ### RadioConnectorCli
@@ -32,9 +43,6 @@ Run `RadioConnectorCli`:
   - Windows: `%APPDATA%\RtTC\settings.ini`
   - macOS: `~/Library/Application Support/RtTC/settings.ini`
   - Linux: `~/.config/rttc/settings.ini`
-
-  The first run copies the files from the old folder (`RTTY-Connector`, or
-  `rtty-connector` on Linux), which is left as it was.
 - **Test tools**: loopback self-test, test files, tuning tone (a steady tone at the AFSK
   tones, to set audio levels and check the radio keys; any key stops it), test message,
   CAT check.
@@ -67,10 +75,9 @@ with 64 check bytes), so long lines take more packets.
 ### RadioConnector
 
 `RadioConnector --main 127.0.0.1:9000` runs headless: it connects one radio (direwolf,
-AX.25 with FX.25) to the suite's main program, which sends it text and config as JSON
+AX.25 with FX.25) to the main program, which sends it text and config as JSON
 lines over TCP. The connector delivers the text to another station's connector, splitting
-it into parts, with acks and retries, and reports each message's state. The main program
-never deals with the radio: every connector speaks the same JSON, whatever it connects to.
+it into parts, with acks and retries, and reports each message's state.
 
 - It dials the main program and retries every 5 s; the radio keeps running meanwhile. Pick a
   port nothing else uses (8080 is often a web server's).
@@ -92,6 +99,8 @@ Logs go to stderr.
 
 ### Docs
 
+- [docs/radios.md](docs/radios.md): radios that are tested, that should work, and setups
+  that won't.
 - [docs/connector-protocol.md](docs/connector-protocol.md): the protocol. JSON between the
   main program and a connector, and the `RC1` air format between connectors.
 - [docs/json-format.md](docs/json-format.md): the JSON format, message by message and field
@@ -100,8 +109,8 @@ Logs go to stderr.
   that does it.
 - [docs/rc1-test-messages.md](docs/rc1-test-messages.md): `RC1` lines to type in
   RadioConnectorCli to test a RadioConnector's acks by hand.
-- [docs/bluetooth-audio.md](docs/bluetooth-audio.md): audio over Bluetooth to UV-Pro-style
-  radios, how to set it up, and how the radio's protocol works.
+- [docs/bluetooth-audio.md](docs/bluetooth-audio.md): audio over Bluetooth to the radios
+  that support it, how to set it up, and how the radio's protocol works.
 
 ### Installing direwolf
 

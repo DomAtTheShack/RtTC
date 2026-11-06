@@ -1,8 +1,9 @@
 # JSON format
 
-A reference for every JSON message between `RadioConnector` and the suite's main
-program: the envelope, each message type and its fields, the config object, and the
-errors. [connector-protocol.md](connector-protocol.md) explains why it works this way
+A reference for every JSON message between `RadioConnector` and the main program: the
+envelope, each message type and its fields, the config object, and the errors. The main
+program is a separate application, not released yet; any program that speaks this format
+can take its place. [connector-protocol.md](connector-protocol.md) explains why it works this way
 and what happens on the air; this page is only the format. The code is in
 `src/Connector/radio_connector.cpp` (requests), `connector.cpp` (messages) and
 `connector_config.cpp` (config).
@@ -306,7 +307,7 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
   "rxAudio": "0",
   "txAudio": "0",
   "bluetooth": {"address": "", "playAudio": "", "recordAudio": ""},
-  "radio": {"type": "cat", "port": "COM5", "baud": 38400, "rigModel": 1037},
+  "radio": {"type": "cat", "port": "COM5", "baud": 19200, "rigModel": 3073},
   "ptt": {"type": "rts", "port": "COM6"},
   "retry": {"tries": 4, "extraWaitSeconds": 10},
   "holdForMainSeconds": 180,
@@ -320,8 +321,8 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
 | `packetBaud` | integer | `1200` | `300`, `1200`, `9600` | yes |
 | `fx25` | string or integer | `"auto"` | `"off"`, `"auto"`, `16`, `32`, `64` (check bytes; `"16"` etc. also accepted). Sent back as `"off"`, `"auto"` or a number | yes |
 | `path` | string array | `[]` | Up to 8 digipeater callsigns, e.g. `["WIDE1-1"]` | no |
-| `rxAudio` | string | `""` | Recording device `name` from `audio.devices`. Required (except Bluetooth on Linux/macOS) | yes |
-| `txAudio` | string | `""` | Playback device `name`. Required (except Bluetooth on Linux/macOS) | yes |
+| `rxAudio` | string | `""` | Recording device `name` from `audio.devices`. Required, except with Bluetooth on Linux/macOS or `ptt.type` `aioc` | yes |
+| `txAudio` | string | `""` | Playback device `name`. Required, except with Bluetooth on Linux/macOS or `ptt.type` `aioc` | yes |
 | `bluetooth.address` | string | `""` | A radio's Bluetooth address, e.g. `38:D2:00:01:C0:AB` (`-` also accepted), for audio over Bluetooth. `""` = use sound cards. Setting one sets `ptt.type` to `vox` | yes |
 | `bluetooth.playAudio` | string | `""` | Windows only: the virtual cable the radio's audio plays into. Required on Windows with Bluetooth | yes |
 | `bluetooth.recordAudio` | string | `""` | Windows only: the virtual cable the transmit audio is recorded from. Required on Windows with Bluetooth | yes |
@@ -329,8 +330,8 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
 | `radio.port` | string | | `cat`: a serial port, e.g. `COM5` or `/dev/ttyUSB0`. `rigctld`: `host:port` of your own rigctld. Required when switching to either | yes |
 | `radio.baud` | integer | `19200` | `cat` only: 300 to 1000000 | yes |
 | `radio.rigModel` | integer | `3087` | `cat` only: a Hamlib model number, 1 to 99999 (not 2; use `rigctld`) | yes |
-| `ptt.type` | string | `"vox"` | `vox` (the radio keys on audio), `cat` (a command over the radio's port, needs `radio`), `rts` or `dtr` (that line of a serial port) | yes |
-| `ptt.port` | string | `""` | `rts`/`dtr` only: the serial port. `""` = the radio's CAT port. Only sent for `rts`/`dtr` | yes |
+| `ptt.type` | string | `"vox"` | `vox` (the radio keys on audio), `cat` (a command over the radio's port, needs `radio`), `rts` or `dtr` (that line of a serial port), `aioc` (an [AIOC cable](radios.md#aioc-cable): its serial port and sound card are found each time the radio starts, and replace `rxAudio`/`txAudio`) | yes |
+| `ptt.port` | string | `""` | `rts`/`dtr` only: the serial port. `""` = the radio's CAT port. Sent for `rts`/`dtr`, and for `aioc` as the port the cable was last found on (read-only: setting it with `aioc` is an error) | yes |
 | `retry.tries` | integer | `4` | 1 to 20. Sends of a message before it's `failed` | no |
 | `retry.extraWaitSeconds` | integer | `10` | 0 to 600. Seconds to wait for an ack, on top of the airtime | no |
 | `holdForMainSeconds` | integer | `180` | 0 to 86400. How long a received message waits for an `ack` | no |
@@ -338,7 +339,7 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
 
 `radio` comes back with only the fields for its type: `{"type":"none"}`,
 `{"type":"rigctld","port":"127.0.0.1:4532"}` or
-`{"type":"cat","port":"COM5","baud":38400,"rigModel":1037}`.
+`{"type":"cat","port":"COM5","baud":19200,"rigModel":3073}`.
 
 `radio`, `ptt` and `bluetooth` are checked together once the whole change is in. These
 are errors with field `ptt`:
@@ -347,6 +348,9 @@ are errors with field `ptt`:
 - `rts`/`dtr` with no serial port (no `ptt.port` and no `cat` radio), or on the radio's
   port when that's a rigctld address
 - anything but `vox` while `bluetooth.address` is set
+
+With `aioc`, a missing cable isn't a config error: `radio.status` goes to `error` (e.g.
+`No AIOC cable found. Is it plugged in?`), and the connector tries again every 10 s.
 
 To change more than one of them, send them in one `config.set`.
 

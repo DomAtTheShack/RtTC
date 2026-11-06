@@ -6,9 +6,11 @@
 #include <vector>
 
 enum class Operation { Receive, Transmit, Duplex };
-// How the transmitter is keyed: VOX, a CAT command, or the RTS/DTR line of a serial port
-// (which can be a second port, e.g. the FTDX3000's Standard port)
-enum class PttType { Vox, Cat, Rts, Dtr };
+// How the transmitter is keyed: VOX, a CAT command, the RTS/DTR line of a serial port
+// (which can be a second serial port, on radios whose USB connection has two), or an AIOC
+// cable (src/Radio/aioc.h: DTR on and RTS off on its serial port, which is found each run
+// along with its sound card)
+enum class PttType { Vox, Cat, Rts, Dtr, Aioc };
 
 // RIG_MODEL_X6100, without needing Hamlib's headers here
 constexpr int defaultRigModel = 3087;
@@ -30,7 +32,8 @@ struct Settings {
     int catBaud = 19200;
     int rigModel = defaultRigModel;   // Hamlib model number
     PttType ptt = PttType::Vox;
-    std::string pttPort;       // RTS/DTR: the serial port. Empty = the CAT port
+    std::string pttPort;       // RTS/DTR: the serial port. Empty = the CAT port. AIOC: the
+                               // cable's port when last found
     std::string audioFile;     // Empty = sound card
     // Bluetooth audio (docs/bluetooth-audio.md): the radio's address, empty = off. The modems
     // then use a virtual sound card instead of rxAudio/txAudio, except on Windows, where
@@ -56,8 +59,10 @@ struct Settings {
     bool hasCat()    const { return !catPort.empty(); }
     bool keysRadio() const { return ptt != PttType::Vox; }
     bool usesBluetooth() const { return !bluetooth.empty() && audioFile.empty(); }
-    // The serial port RTS/DTR keying uses
-    const std::string& keyingPort() const { return pttPort.empty() ? catPort : pttPort; }
+    // The serial port RTS/DTR or AIOC keying uses
+    const std::string& keyingPort() const {
+        return pttPort.empty() && ptt != PttType::Aioc ? catPort : pttPort;
+    }
 };
 
 // Whether this build has Bluetooth audio, and whether the modems then use the saved sound
@@ -91,7 +96,7 @@ bool saveSettingsTo(const Settings& settings, const std::string& path);
 const char* operationName(Operation operation);
 // "Off", "Auto", "16 check bytes", ...
 std::string fx25Name(int fx25);
-// "vox", "cat", "rts", "dtr": the settings file and the connector's JSON
+// "vox", "cat", "rts", "dtr", "aioc": the settings file and the connector's JSON
 const char* pttKey(PttType ptt);
 bool parsePttKey(const std::string& text, PttType& ptt);
 

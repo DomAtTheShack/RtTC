@@ -22,14 +22,12 @@ program A sees every step as a `message.status` line.
 There are two layers. The main program speaks JSON to its connector over TCP, and connectors
 speak a compact text format to each other over the air.
 
-**Design rule: the main program never sees the medium.** Every connector (radio, internet,
-anything else) speaks the same Layer 1 interface to the main program. All medium-specific work
-stays inside the connector: for radio that's direwolf, the air format, splitting, retries and
-ACKs. In the final setup the other station's connector runs on a different computer, like VARA
-HF/VHF, so each copy has its own settings file and callsign. The second copy on one PC is only a
-test stand-in for that.
+**Design rule: the main program never sees the radio.** It only speaks the Layer 1 JSON. All
+radio work stays inside the connector: direwolf, the air format, splitting, retries and ACKs.
+Normally the other station's connector runs on a different computer, so each copy has its own
+settings file and callsign. Running two copies on one PC is only for testing.
 
-**Layer 1: suite JSON (main program ↔ connector).** One JSON object per line. The connector
+**Layer 1: JSON (main program ↔ connector).** One JSON object per line. The connector
 dials out to the main program (`--main 127.0.0.1:9000`) and retries every 5 s. Every message uses
 the same envelope:
 
@@ -40,8 +38,8 @@ the same envelope:
 | Message | Direction | What it means for ACKs |
 | --- | --- | --- |
 | `message.send` | main → connector | Send this text to that callsign |
-| `message.accepted` | connector → main | Reply with the new `msgId` (e.g. `N8GM/03F`) and part count |
-| `message.status` | connector → main | Sent on every state change, with `partsAcked`. This is the ACK the client sees |
+| `message.accepted` | connector → main | Reply with the new `msgId` (e.g. `N0CALL/03F`) and part count |
+| `message.status` | connector → main | Sent on every state change, with `partsAcked`. This is the ACK the main program sees |
 | `message.received` | connector → main | A whole message arrived from another station |
 | `ack` | main → connector | Main took the message (`re` = its `id`). Triggers the `OK` result over the air |
 
@@ -88,7 +86,7 @@ never touches sockets. `src/Connector/radio_connector.cpp` feeds it events and g
 | `Engine::sendAck` | Receiver side: sends `RC1\|A` with `formatRanges` (e.g. `1-3,5`), plus the Result frame if already finished |
 | `Engine::tick` | All the timers: Waiting → retry, Received → nudge for result, receiver's 2 s ack delay, 3 min hold, 2 min collect timeout |
 | `Engine::mainAck` / `finishIncoming` | Receiver's main program acked: send `RC1\|R\|id\|OK` and remember the ID for 10 min |
-| `Engine::emitStatus` | Builds the `message.status` JSON the sending client sees |
+| `Engine::emitStatus` | Builds the `message.status` JSON the sending main program sees |
 | `parseAir`, `formatData/Ack/Result`, `parseRanges` | Read and write the air format |
 
 **Sender side, step by step.**
@@ -143,8 +141,8 @@ Two stations need two callsigns, so the programs keep separate settings:
 
 | Program | Settings file | Callsign |
 | --- | --- | --- |
-| RadioConnectorCli (menus) | `settings.ini` | e.g. `N8GM` |
-| RadioConnector | `connector.ini`, or `--settings <file>` | e.g. `N8GM-1` |
+| RadioConnectorCli (menus) | `settings.ini` | e.g. `N0CALL` |
+| RadioConnector | `connector.ini`, or `--settings <file>` | e.g. `N0CALL-1` |
 
 Both files live in `%APPDATA%\RtTC` (Windows), `~/Library/Application
 Support/RtTC` (macOS) or `~/.config/rttc` (Linux). On its first run the
@@ -152,7 +150,7 @@ connector creates `connector.ini` as a copy of `settings.ini`, with the next SSI
 callsign. Edit it by hand to change the connector's settings.
 
 The menu program's **Send to** setting addresses typed packets to a station instead of `CQ`.
-With Send to = `N8GM-1`, typed `RC1` lines reach the connector and its ACKs come back to the menu.
+With Send to = `N0CALL-1`, typed `RC1` lines reach the connector and its ACKs come back to the menu.
 See [rc1-test-messages.md](rc1-test-messages.md).
 
 `RadioTests` checks the whole cycle automatically (its `air` group). It starts RadioConnector

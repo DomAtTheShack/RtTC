@@ -27,6 +27,9 @@
     #include <netinet/tcp.h>
     #include <sys/socket.h>
     #ifdef __APPLE__
+        #include <CoreFoundation/CoreFoundation.h>
+        #include <IOKit/IOKitLib.h>
+        #include <IOKit/serial/IOSerialKeys.h>
         #include <mach-o/dyld.h>
         #include <pulse/pulseaudio.h>
         #include <pulse/simple.h>
@@ -34,8 +37,10 @@
         #include <alsa/asoundlib.h>
     #endif
     #include <cerrno>
+    #include <climits>
     #include <csignal>
     #include <fcntl.h>
+    #include <fstream>
     #include <glob.h>
     #include <poll.h>
     #include <signal.h>
@@ -577,6 +582,44 @@ std::vector<std::string> listSerialPorts() {
         return a.size() != b.size() ? a.size() < b.size() : a < b;
     });
     return ports;
+}
+
+std::string findUsbSerialPort(uint16_t vendorId, uint16_t productId) {
+    // Every USB device Windows has seen is under Enum\USB, by "VID_xxxx&PID_xxxx" (with
+    // "&MI_xx" for each interface of a composite device like the AIOC). A serial interface
+    // has its COM port in "<instance>\Device Parameters\PortName"
+    wchar_t prefix[32];
+    _snwprintf(prefix, std::size(prefix), L"VID_%04X&PID_%04X", vendorId, productId);
+    std::vector<std::string> present = listSerialPorts();   // Unplugged devices stay in Enum
+    std::string found;
+    HKEY usb;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Enum\\USB", 0, KEY_READ,
+                      &usb) != ERROR_SUCCESS) return "";
+    for (DWORD i = 0; found.empty(); i++) {
+        wchar_t device[256];
+        DWORD deviceLen = std::size(device);
+        LONG status = RegEnumKeyExW(usb, i, device, &deviceLen, nullptr, nullptr, nullptr, nullptr);
+        if (status == ERROR_NO_MORE_ITEMS) break;
+        if (status != ERROR_SUCCESS || _wcsnicmp(device, prefix, wcslen(prefix)) != 0) continue;
+        HKEY deviceKey;
+        if (RegOpenKeyExW(usb, device, 0, KEY_READ, &deviceKey) != ERROR_SUCCESS) continue;
+        for (DWORD j = 0; found.empty(); j++) {
+            wchar_t instance[256];
+            DWORD instanceLen = std::size(instance);
+            if (RegEnumKeyExW(deviceKey, j, instance, &instanceLen, nullptr, nullptr, nullptr,
+                              nullptr) != ERROR_SUCCESS) break;
+            std::wstring params = std::wstring(instance) + L"\\Device Parameters";
+            wchar_t port[64];
+            DWORD portSize = sizeof port;
+            if (RegGetValueW(deviceKey, params.c_str(), L"PortName", RRF_RT_REG_SZ, nullptr, port,
+                             &portSize) != ERROR_SUCCESS) continue;
+            std::string name = narrow(port);
+            if (std::find(present.begin(), present.end(), name) != present.end()) found = name;
+        }
+        RegCloseKey(deviceKey);
+    }
+    RegCloseKey(usb);
+    return found;
 }
 
 void enableAnsiEscapes() {
@@ -1212,6 +1255,87 @@ std::vector<std::string> listSerialPorts() {
     }
     return ports;
 }
+
+#ifdef __APPLE__
+namespace {
+
+// A number property of the service or the USB device above it, or -1
+long usbNumber(io_object_t service, CFStringRef key) {
+    CFTypeRef value = IORegistryEntrySearchCFProperty(
+        service, kIOServicePlane, key, kCFAllocatorDefault,
+        kIORegistryIterateRecursively | kIORegistryIterateParents);
+    long number = -1;
+    if (value) {
+        if (CFGetTypeID(value) == CFNumberGetTypeID())
+            CFNumberGetValue(static_cast<CFNumberRef>(value), kCFNumberLongType, &number);
+        CFRelease(value);
+    }
+    return number;
+}
+
+} // namespace
+
+std::string findUsbSerialPort(uint16_t vendorId, uint16_t productId) {
+    // Each serial port is an IOSerialBSDClient; the USB device it belongs to is above it
+    io_iterator_t services;
+    if (IOServiceGetMatchingServices(0, IOServiceMatching(kIOSerialBSDServiceValue), &services) !=
+        KERN_SUCCESS) return "";
+    std::string found;
+    while (io_object_t service = IOIteratorNext(services)) {
+        if (found.empty() && usbNumber(service, CFSTR("idVendor")) == vendorId &&
+            usbNumber(service, CFSTR("idProduct")) == productId) {
+            // cu.*, as listSerialPorts gives
+            CFTypeRef path = IORegistryEntryCreateCFProperty(service, CFSTR(kIOCalloutDeviceKey),
+                                                             kCFAllocatorDefault, 0);
+            if (path) {
+                char buffer[512];
+                if (CFGetTypeID(path) == CFStringGetTypeID() &&
+                    CFStringGetCString(static_cast<CFStringRef>(path), buffer, sizeof buffer,
+                                       kCFStringEncodingUTF8))
+                    found = buffer;
+                CFRelease(path);
+            }
+        }
+        IOObjectRelease(service);
+    }
+    IOObjectRelease(services);
+    return found;
+}
+#else
+namespace {
+
+// A sysfs file's first line, or ""
+std::string sysfsLine(const std::string& path) {
+    std::ifstream in(path);
+    std::string line;
+    std::getline(in, line);
+    return line;
+}
+
+} // namespace
+
+std::string findUsbSerialPort(uint16_t vendorId, uint16_t productId) {
+    char want[2][8];
+    std::snprintf(want[0], sizeof want[0], "%04x", vendorId);
+    std::snprintf(want[1], sizeof want[1], "%04x", productId);
+    for (const std::string& port : listSerialPorts()) {
+        // /sys/class/tty/<port>/device is the USB interface (ttyACM) or a port below it
+        // (ttyUSB); the USB device with the IDs is a folder or two up
+        std::string tty = port.substr(port.rfind('/') + 1);
+        char below[PATH_MAX];
+        if (!realpath(("/sys/class/tty/" + tty + "/device").c_str(), below)) continue;
+        std::string dir = below;
+        for (int up = 0; up < 3; up++) {
+            dir += "/..";
+            std::string vendor = sysfsLine(dir + "/idVendor");
+            if (vendor.empty()) continue;
+            if (vendor == want[0] && sysfsLine(dir + "/idProduct") == want[1]) return port;
+            break;   // Another USB device
+        }
+    }
+    return "";
+}
+#endif
 
 void enableAnsiEscapes() {}
 

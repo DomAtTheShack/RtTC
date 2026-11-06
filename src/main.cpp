@@ -14,6 +14,7 @@
 
 #include "ansi.hpp"
 #include "backend.h"
+#include "Radio/aioc.h"
 #include "Radio/cat.h"
 #include "Radio/fsk.h"
 #include "Radio/modem.h"
@@ -292,6 +293,8 @@ string pttDescription(const Settings& settings) {
             if (settings.pttPort.empty()) return text + " on the CAT port (" + settings.catPort + ")";
             return text + " on " + settings.pttPort;
         }
+        case PttType::Aioc:
+            return settings.pttPort.empty() ? "AIOC cable" : "AIOC cable on " + settings.pttPort;
     }
     return "?";
 }
@@ -316,6 +319,21 @@ void unkeyAfterDirewolf(const Settings& settings) {
     } catch (const std::exception& e) {
         ansi::print(failColor, "Couldn't unkey the radio (%s). Check it isn't transmitting!\n", e.what());
     }
+}
+
+// AIOC: finds the cable's serial port and sound card again, since they can change each
+// time it's plugged in. false (after saying why) if it isn't there
+bool findAiocCable(Settings& settings) {
+    if (settings.ptt != PttType::Aioc) return true;
+    ansi::clearScreen();
+    ansi::print(dimColor, "Looking for the AIOC cable...\n");
+    ansi::flush();
+    if (string problem = aioc::useCable(settings, aioc::find()); !problem.empty()) {
+        showMessage("AIOC cable not found", problem + "\n\nPlug it in, or change Settings > PTT.");
+        return false;
+    }
+    save(settings);
+    return true;
 }
 
 // Running
@@ -404,7 +422,9 @@ bool runDirewolf(const Settings& settings, const string& rxName, const string& t
     fs::path config = fs::temp_directory_path() / configName;
     {
         std::ofstream out(config, std::ios::trunc);
-        out << direwolfConfig(settings, direwolfDevice(rxName, false), direwolfDevice(txName, true), kissPort);
+        bool cable = settings.ptt == PttType::Aioc;
+        out << direwolfConfig(settings, direwolfDevice(rxName, false, cable), direwolfDevice(txName, true, cable),
+                              kissPort);
         if (!out) {
             ansi::print(failColor, "Could not write %s\n", config.string().c_str());
             return false;
@@ -462,6 +482,7 @@ void startPacketSession(Settings& settings) {
         return;
     }
 
+    if (!findAiocCable(settings)) return;
 #ifdef __APPLE__
     if (settings.usesBluetooth()) {
         // Homebrew's direwolf uses the Mac's default sound card, which the bridge can't be
@@ -585,7 +606,8 @@ void pickRadioControl(Settings& settings) {
     changed.catPort = port;
     // Keying through a radio that's gone falls back to VOX
     if (!changed.hasCat() && changed.ptt == PttType::Cat) changed.ptt = PttType::Vox;
-    if (!changed.hasCat() && changed.keysRadio() && changed.pttPort.empty()) changed.ptt = PttType::Vox;
+    if (!changed.hasCat() && changed.keysRadio() && changed.pttPort.empty() && changed.ptt != PttType::Aioc)
+        changed.ptt = PttType::Vox;
     if (string problem = pttProblem(changed); !problem.empty()) {
         showMessage("Can't use that", "PTT is " + pttDescription(changed) + ", and " + problem + ".");
         return;
@@ -633,11 +655,31 @@ void pickPtt(Settings& settings) {
         "CAT command        sent over the radio's CAT port",
         "RTS line           on a serial port (e.g. Digirig, IC-7300 USB SEND, FTDX3000 Standard port)",
         "DTR line           on a serial port",
+        "AIOC cable         USB cable for K-plug radios (e.g. Baofeng): its PTT and sound card",
     };
     int choice = ansi::select("PTT", labels, static_cast<int>(settings.ptt));
     if (choice < 0) return;
     Settings changed = settings;
     changed.ptt = static_cast<PttType>(choice);
+    if (changed.ptt == PttType::Aioc) {
+        ansi::clearScreen();
+        ansi::print(dimColor, "Looking for the AIOC cable...\n");
+        ansi::flush();
+        if (string problem = aioc::useCable(changed, aioc::find()); !problem.empty()) {
+            showMessage("AIOC cable not found", problem);
+            return;
+        }
+        if (string problem = pttProblem(changed); !problem.empty()) {
+            showMessage("Can't use that", "PTT " + pttDescription(changed) + ": " + problem + ".");
+            return;
+        }
+        showMessage("AIOC cable found",
+                    "PTT: " + changed.pttPort + "\nRx sound card: " + changed.rxAudioDesc +
+                    "\nTx sound card: " + changed.txAudioDesc +
+                    "\n\nThey're found again each time you start, in case they change.");
+        settings = changed;
+        return;
+    }
     if (changed.ptt == PttType::Cat && !changed.hasCat()) {
         pickRadioControl(changed);
         if (!changed.hasCat()) return;
@@ -836,6 +878,7 @@ void runStandardTests() {
 
 // One packet with the test message, then stops
 void packetTestMessage(Settings& settings) {
+    if (!findAiocCable(settings)) return;
     Settings onAir = settings;
     onAir.operation = Operation::Transmit;
     onAir.audioFile.clear();
@@ -878,6 +921,7 @@ void tuningTone(Settings& settings) {
                               "It transmits until a key is pressed");
     if (choice < 0) return;
     int hz = tones[choice].hz;
+    if (!findAiocCable(settings)) return;
 
     BluetoothSession bluetooth;
     if (settings.usesBluetooth() && !bluetooth.start(settings)) return;

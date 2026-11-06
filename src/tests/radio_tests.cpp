@@ -36,6 +36,7 @@
 #include "../Bluetooth/bt_protocol.h"
 #include "../Connector/connector.h"
 #include "../Connector/connector_config.h"
+#include "../Radio/aioc.h"
 #include "../Radio/cat.h"
 #include "../Radio/fsk.h"
 #include "../Radio/modem.h"
@@ -216,6 +217,53 @@ void testPttSettings() {
     CHECK(!pttProblem(p).empty());   // An address has no RTS line
 }
 
+// An AIOC cable: its sound card picked from a list, its port and sound card put into the
+// settings, and direwolf's PTT line
+void testAioc() {
+    using os::AudioDevice;
+    // Linux: ALSA lists several names per card; plughw converts the rate
+    std::vector<AudioDevice> alsa = {
+        {"default", "Default ALSA Output"},
+        {"hw:CARD=AllInOneCable,DEV=0", "All-In-One-Cable, USB Audio - Direct hardware device"},
+        {"plughw:CARD=AllInOneCable,DEV=0", "All-In-One-Cable, USB Audio - Hardware device with all software conversions"},
+        {"plughw:CARD=PCH,DEV=0", "HDA Intel PCH, ALC892 Analog"},
+    };
+    auto picked = aioc::pickCableAudio(alsa);
+    CHECK(picked && picked->name == "plughw:CARD=AllInOneCable,DEV=0");
+    // Windows: a WinMM number, named after the cable (cut to 31 characters)
+    picked = aioc::pickCableAudio({{"0", "Microphone (Realtek Audio)"}, {"1", "Microphone (2- All-In-One-Cable"}});
+    CHECK(picked && picked->name == "1");
+    CHECK(!aioc::pickCableAudio({{"0", "Speakers (USB Audio CODEC)"}}));
+
+    Settings s;
+    s.ptt = PttType::Aioc;
+    CHECK(pttProblem(s).empty());          // The port is found when it starts
+    CHECK(s.keyingPort().empty());         // Never the CAT port
+    s.catPort = "COM5";
+    CHECK(s.keyingPort().empty());
+
+    aioc::Cable cable;
+    CHECK(!aioc::useCable(s, cable).empty());   // Nothing plugged in
+    cable.port = "/dev/ttyACM0";
+    CHECK(!aioc::useCable(s, cable).empty());   // No sound card
+    CHECK(s.pttPort.empty());                   // Unchanged on an error
+    cable.capture = AudioDevice{"plughw:CARD=AllInOneCable,DEV=0", "All-In-One-Cable"};
+    cable.playback = cable.capture;
+    CHECK(aioc::useCable(s, cable).empty());
+    CHECK(s.pttPort == "/dev/ttyACM0" && s.keyingPort() == "/dev/ttyACM0");
+    CHECK(s.rxAudio == "plughw:CARD=AllInOneCable,DEV=0" && s.txAudio == s.rxAudio);
+
+    // Keyed while DTR is on and RTS off; RTS is held on the rest of the time
+    CHECK(direwolfConfig(s, "1", "2", 7001).find("PTT /dev/ttyACM0 DTR -RTS\n") != std::string::npos);
+
+    Settings back = parseSettings(formatSettings(s));
+    CHECK(back.ptt == PttType::Aioc && back.pttPort == "/dev/ttyACM0");
+
+    // Bluetooth audio keys the radio itself, so it can't also use the cable
+    s.bluetooth = "38:D2:00:01:C0:AB";
+    CHECK(!pttProblem(s).empty());
+}
+
 void testFx25() {
     Settings s;
     CHECK(s.fx25 == 1);                                   // Auto unless chosen
@@ -376,7 +424,7 @@ void testDirewolfConfig() {
     s.catBaud = 38400;
     s.rigModel = 1037;   // FTDX-3000
     CHECK(direwolfConfig(s, "1", "2", 7001).find("PTT RIG 1037 COM5 38400\n") != std::string::npos);
-    s.ptt = PttType::Rts;   // The FTDX3000's Standard port, next to CAT on its Enhanced port
+    s.ptt = PttType::Rts;   // A radio's second USB serial port, next to CAT on its first
     s.pttPort = "COM6";
     CHECK(direwolfConfig(s, "1", "2", 7001).find("PTT COM6 RTS\n") != std::string::npos);
     s.ptt = PttType::Dtr;   // The CAT port's own line
@@ -830,6 +878,19 @@ void testConnectorConfig() {
     CHECK(applyConfig(s, {{"ptt", {{"type", "cat"}}}}).ok && s.ptt == PttType::Cat);
     CHECK(applyConfig(s, {{"ptt", {{"type", "vox"}}}, {"radio", {{"type", "none"}}}}).ok && !s.hasCat());
     CHECK(applyConfig(s, {{"ptt", {{"type", "push"}}}}).field == "ptt.type");
+    // AIOC: no port to give, and no sound cards needed up front: both are found at start
+    CHECK(applyConfig(s, {{"ptt", {{"type", "aioc"}, {"port", "COM9"}}}}).field == "ptt.port");
+    change = applyConfig(s, {{"ptt", {{"type", "aioc"}}}});
+    CHECK(change.ok && change.restartRequired && s.ptt == PttType::Aioc);
+    CHECK(configToJson(s)["ptt"]["type"] == "aioc");
+    {
+        Settings noAudio = s;
+        noAudio.callsign = "N0CALL-7";
+        noAudio.rxAudio.clear();
+        noAudio.txAudio.clear();
+        CHECK(connector::missingConfig(noAudio).empty());
+    }
+    CHECK(applyConfig(s, {{"ptt", {{"type", "vox"}}}}).ok && s.pttPort.empty());
 
     change = applyConfig(s, {{"main", "localhost:9000"}});
     CHECK(change.ok && change.mainChanged && !change.restartRequired);
@@ -1064,6 +1125,7 @@ int runUnit() {
         {"Simulated radios", testChannelModels},
         {"Packet settings", testPacketSettings},
         {"PTT settings", testPttSettings},
+        {"AIOC cable", testAioc},
         {"Callsigns", testCallsigns},
         {"AX.25 frames", testAx25Frames},
         {"Splitting long text", testSplitInfo},
