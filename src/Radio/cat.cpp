@@ -112,6 +112,10 @@ std::unique_ptr<Cat> openPtt(const Settings& s) {
             // Only the line: Hamlib's dummy rig, with a real port for PTT
             return std::make_unique<Cat>(RIG_MODEL_DUMMY, "", 0, s.ptt == PttType::Rts ? "RTS" : "DTR",
                                          s.keyingPort());
+        case PttType::Aioc:
+            if (s.keyingPort().empty()) throw std::runtime_error("the AIOC cable wasn't found");
+            // Hamlib turns RTS off when it opens a separate PTT port, so DTR alone keys it
+            return std::make_unique<Cat>(RIG_MODEL_DUMMY, "", 0, "DTR", s.keyingPort());
     }
     return nullptr;
 }

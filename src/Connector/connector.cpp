@@ -217,7 +217,7 @@ bool validUtf8(std::string_view text) {
     return true;
 }
 
-// Suite envelope
+// Envelope
 
 Json envelope(const std::string& type, Json body, Json id, Json re) {
     Json out = {{"v", protocolVersion}, {"type", type}};

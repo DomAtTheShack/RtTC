@@ -53,9 +53,9 @@ WinRT.
 ### macOS
 
 Not available yet. The code is there (it follows HTCommander's macOS build, through
-Homebrew's PulseAudio), but direwolf on macOS only uses the system's default sound card,
-so it can't reach the bridge's, and the Bluetooth setting is hidden. (The minimodem
-version on the `archive/minimodem` branch could use it.)
+Homebrew's PulseAudio), but the bridge's sound cards are PulseAudio devices, and direwolf
+on macOS only sees CoreAudio devices, so it can't reach them. The Bluetooth setting is
+hidden.
 
 ## How it works
 
@@ -127,13 +127,12 @@ notification), 9 (event notification), 20 (HT status). An HT status notification
 
 - RadioTests' unit tests: framing, GAIA, SBC (round trip about 60 dB SNR, and the header
   the radio needs), transmit keying and settings.
-- On a Linux PC, without a radio: direwolf packets (and, before it was archived, minimodem
-  RTTY) through the virtual
-  sound cards, the transmit keying, the SBC encoding and back. Text and packets came
-  through whole, one transmission each, ended with the end frame. Our SBC also decodes
-  with BlueZ's libsbc.
-- With a UV-PRO on Linux: both channels connect, and the radio answers the handshake
-  with device info, status notifications and its HT status. Transmitting works on the
+- On a Linux PC, without a radio: direwolf packets through the virtual sound cards, the
+  transmit keying, the SBC encoding and back. Packets came through whole, one
+  transmission each, ended with the end frame. Our SBC also decodes with BlueZ's libsbc.
+- With a BTech UV-Pro on Linux (the only radio tested so far): both channels connect,
+  and the radio answers the handshake with device info, status notifications and its HT
+  status. Transmitting works on the
   air, and so does receiving: direwolf decoded an APRS position beacon from a
   Radioddity GD-88.
 - Not yet: Windows and macOS haven't been run on a radio.

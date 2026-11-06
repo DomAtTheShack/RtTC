@@ -316,7 +316,7 @@ private:
                 if (auto frame = packet::decode(bytes)) {
                     // Show who it's for unless it's to everyone with no path, e.g. an ack to
                     // this station. Then the digipeaters as direwolf shows them: a "*" on
-                    // ones that have repeated it, e.g. N8GM-7>APRS,WIDE1-1*,WIDE2-1
+                    // ones that have repeated it, e.g. N0CALL-7>APRS,WIDE1-1*,WIDE2-1
                     std::string from = frame->source;
                     if (frame->destination != packet::groupAddress || !frame->path.empty())
                         from += ">" + frame->destination;
