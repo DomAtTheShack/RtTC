@@ -1,6 +1,6 @@
 # Connected mode
 
-Status: **built** on the `connected-mode` branch, and **on by default**
+Status: **built**, and **on by default**
 (`connected.enabled`). Connected mode is the main way to reach the connector; `RC1` stays
 for now and will be removed ([below](#removing-rc1)). The suite is for VHF/UHF only, never
 HF.
@@ -23,8 +23,9 @@ on the same radio, until it's removed.
 direwolf runs the AX.25 link itself (connect, sequence numbers, acks, retries) and the
 connector drives it over direwolf's **AGW** port, next to the KISS port `RC1` uses. The
 connector only sees connects, disconnects and data. RadioConnectorCli doesn't change: it
-keeps using KISS, and its packet screen shows the connected-mode frames (`SABM`, `UA`, `I`,
-`RR`) like any others.
+is the testing and debugging program and keeps raw KISS. Its packet screen shows the text
+of a session's `I` frames as well as UI frames, but not the control frames (`SABM`, `UA`,
+`RR`, `DISC`); `RadioConnector --verbose` logs every connect, disconnect and line of text.
 
 | AGW | Used for |
 |---|---|

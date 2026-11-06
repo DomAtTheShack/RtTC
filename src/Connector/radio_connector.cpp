@@ -1,5 +1,5 @@
 // Headless: connects one radio (direwolf, AX.25 and FX.25) to the
-// suite's main program over JSON/TCP. See docs/connector-protocol.md.
+// main program over JSON/TCP. See docs/connector-protocol.md.
 //
 // One thread runs everything below; the main program's socket, direwolf's output and
 // its KISS and AGW ports each have a reader thread that only puts events on the queue.
@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "../backend.h"
+#include "../Radio/aioc.h"
 #include "../Radio/cat.h"
 #include "agw.h"
 #include "connector.h"
@@ -257,6 +258,13 @@ public:
             setState(State::Unconfigured, "missing " + missing);
             return;
         }
+        // An AIOC cable's port and sound card can change each time it's plugged in
+        if (settings.ptt == PttType::Aioc) {
+            if (std::string problem = aioc::useCable(settings, aioc::find()); !problem.empty())
+                return fail(problem);
+            logLine("AIOC cable: PTT on %s, sound card %s", settings.pttPort.c_str(),
+                    settings.rxAudio.c_str());
+        }
         // Bluetooth audio first: direwolf then uses its sound card
         std::string rxDevice = settings.rxAudio, txDevice = settings.txAudio;
         if (settings.usesBluetooth()) {
@@ -291,7 +299,9 @@ public:
         configPath = fs::temp_directory_path() / configName;
         {
             std::ofstream out(configPath, std::ios::trunc);
-            out << direwolfConfig(settings, direwolfDevice(rxDevice, false), direwolfDevice(txDevice, true), kissPort,
+            bool cable = settings.ptt == PttType::Aioc;
+            out << direwolfConfig(settings, direwolfDevice(rxDevice, false, cable),
+                                  direwolfDevice(txDevice, true, cable), kissPort,
                                   agwPort, connector::direwolfPaclen(settings));
             if (!out) return fail("couldn't write " + configPath.string());
         }
@@ -773,7 +783,7 @@ void usage(const char* program) {
                  program, connectorSettingsPath().c_str());
 }
 
-// The same callsign with another SSID (N8GM -> N8GM-1, N8GM-15 -> N8GM-1), so the
+// The same callsign with another SSID (N0CALL -> N0CALL-1, N0CALL-15 -> N0CALL-1), so the
 // connector is a different station from RadioConnectorCli
 std::string otherSsid(const std::string& callsign) {
     std::string call = packet::normalizeCallsign(callsign);

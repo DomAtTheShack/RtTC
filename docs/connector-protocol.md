@@ -3,28 +3,28 @@
 > Connected mode ([connected-mode.md](connected-mode.md)) is now the main way to reach the
 > connector. `RC1`, below, still works but only gets fixes, and is planned for removal.
 
-Status: **built** (`RadioConnector`: `src/Connector/radio_connector.cpp`, `connector.cpp`,
-`connector_config.cpp`). Decisions are listed at the end. See also
+The code is `src/Connector/radio_connector.cpp`, `connector.cpp` and
+`connector_config.cpp`. Design choices are listed at the end. See also
 [ack-guide.md](ack-guide.md) (how the acks work, with the code) and
 [rc1-test-messages.md](rc1-test-messages.md) (test messages to type in RadioConnectorCli) and
 [json-format.md](json-format.md) (every JSON message and field, as a reference).
 `RadioTests` checks all of this automatically, over the sound cards too.
 
 The Radio Connector is a headless program that connects one radio (through direwolf,
-AX.25 only) to the suite's main program. The main program sends it text and config as
-JSON, and the connector delivers the text to another station's connector over the air.
-RadioConnectorCli, the menu program, stays as it is, for editing settings by hand and
-debugging packets.
+AX.25 only) to a **main program**: a separate application, not released yet, that
+handles the messages. Any program that speaks the JSON below can be the main program.
+The main program sends the connector text and config as JSON, and the connector delivers
+the text to another station's connector over the air. RadioConnectorCli, the menu
+program, is for editing settings by hand and debugging packets.
 
 ```
- main program ──JSON/TCP── connector ──RF (AX.25)── connector ──JSON/TCP── client program
-   (Repeater)                (A)                      (B)                   (User A)
+ main program ──JSON/TCP── connector ──RF (AX.25)── connector ──JSON/TCP── main program
+  (station A)               (A)                       (B)                  (station B)
 ```
 
 There are two layers:
 
-- **Suite JSON**: between the connector and the main program. It uses the shared
-  envelope below, so other programs in the suite can use the same layout.
+- **JSON**: between the connector and the main program, with the envelope below.
 - **Air format**: compact text inside each AX.25 frame. It never leaves the connector;
   the main program only ever sees JSON.
 
@@ -37,7 +37,7 @@ There are two layers:
 - Framing: one JSON object per line (UTF-8, `\n` at the end). No line may be longer than
   64 KiB.
 
-## 2. Suite envelope
+## 2. Envelope
 
 Every message, in both directions:
 
@@ -59,7 +59,7 @@ Errors, sent as a reply to any request:
 {"v":1,"type":"error","re":"m-102","body":{"code":"bad_field","field":"fx25","message":"must be off, auto, 16, 32 or 64"}}
 ```
 
-## 3. Suite messages
+## 3. JSON messages
 
 ### Connector → main
 
@@ -165,9 +165,9 @@ field, so it may contain `|`.
 | Result | `RC1\|R\|03F\|OK` | `OK` = delivered to the main program, `EXP` = held 3 min with no main program, `ERR` = bad message |
 
 - `RC1` marks our frames, version 1, so other AX.25 traffic is ignored. A later version
-  with hopping would be `RC2`.
+  that relays through other connectors would be `RC2`.
 - The message ID is 3 hex digits per sender and wraps at FFF. Together with the sender's
-  callsign it's unique: the suite sees it as `N0CALL-7/03F`.
+  callsign it's unique: the main program sees it as `N0CALL-7/03F`.
 - Text per part = the packet limit minus the header, about 163 bytes with FX.25 auto.
   Parts are filled to the limit (words may be split across parts), never cutting a
   UTF-8 character. Reassembly restores the exact text.
@@ -201,13 +201,13 @@ field, so it may contain `|`.
    its ack, and its result again, but the main program doesn't see it twice.
 6. Drop a message that hasn't got every part when 2 min pass with no new part heard.
 
-### Ready for hopping
+### Room for relaying
 
 The code keeps two addresses apart: the **link** (the AX.25 frame, from this station to
 the next one) and the **message** (from the original sender to the final destination,
 message ID, parts). Today the two are always the same. Relaying through other
 connectors would come in `RC2`, which carries the original sender and final destination
-in the header, without changing the suite JSON. Ordinary digipeaters already work
+in the header, without changing the JSON. Ordinary digipeaters already work
 through the AX.25 path (`path` in config).
 
 ## 5. Config
@@ -223,7 +223,7 @@ can start the radio before the main program connects. `config.set` takes any sub
   "path":[],
   "rxAudio":"...", "txAudio":"...",
   "bluetooth":{"address":"", "playAudio":"", "recordAudio":""},
-  "radio":{"type":"cat","port":"COM5","baud":38400,"rigModel":1037},
+  "radio":{"type":"cat","port":"COM5","baud":19200,"rigModel":3073},
   "ptt":{"type":"rts","port":"COM6"},
   "retry":{"tries":4,"extraWaitSeconds":10},
   "holdForMainSeconds":180,
@@ -239,10 +239,10 @@ direwolf keys the radio itself; the connector never sets the frequency or mode.
 | Field | Values |
 |---|---|
 | `radio.type` | `none`; `cat` (a radio on `port`, with `baud` and Hamlib `rigModel`); `rigctld` (your own rigctld, `port` = host:port) |
-| `ptt.type` | `vox` (the default, e.g. FM on VHF/UHF); `cat` (a command over the radio's CAT port, needs `radio`); `rts` or `dtr` (that line of a serial port) |
-| `bluetooth.address` | A UV-Pro-style radio's Bluetooth address, e.g. `38:D2:00:01:C0:AB`, for audio over Bluetooth ([bluetooth-audio.md](bluetooth-audio.md)); `""` (the default) = sound cards. Setting one sets `ptt` to `vox`: the radio keys itself. On Linux and macOS `rxAudio`/`txAudio` are then unused |
+| `ptt.type` | `vox` (the default, e.g. FM on VHF/UHF); `cat` (a command over the radio's CAT port, needs `radio`); `rts` or `dtr` (that line of a serial port); `aioc` (an AIOC cable: its serial port and sound card are found each time the radio starts, see [radios.md](radios.md#aioc-cable)) |
+| `bluetooth.address` | The Bluetooth address of a radio with Bluetooth audio, e.g. `38:D2:00:01:C0:AB`, for audio over Bluetooth ([bluetooth-audio.md](bluetooth-audio.md)); `""` (the default) = sound cards. Setting one sets `ptt` to `vox`: the radio keys itself. On Linux and macOS `rxAudio`/`txAudio` are then unused |
 | `bluetooth.playAudio`, `bluetooth.recordAudio` | Windows only: the virtual cable ends the bridge plays the radio's audio into and records the transmit audio from (WinMM numbers, as in `audio.devices`). `rxAudio`/`txAudio` are the cables' other ends |
-| `ptt.port` | `rts`/`dtr` only: the serial port, e.g. a second USB port like the FTDX3000's Standard port. `""` = the radio's CAT port |
+| `ptt.port` | `rts`/`dtr`: the serial port, e.g. the second serial port that some radios' USB connection provides. `""` = the radio's CAT port |
 
 `radio` and `ptt` are checked together: `ptt` `cat` without a `radio`, or `rts` on a
 rigctld address, is an error (field `ptt`). Change both in one `config.set`.
@@ -254,7 +254,7 @@ callsign, so the two programs are different stations. The connector always uses 
 whatever the file's `modem` line says. Connector-only keys (path, retry, hold time, main
 address) are in the same format; RadioConnectorCli ignores them.
 
-## Decisions
+## Design choices
 
 - The receiver acks 2 s after the last part it hears (straight away once it has every
   part), then sends a second result frame (delivered, or expired after 3 minutes).
