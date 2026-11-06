@@ -6,7 +6,9 @@
 //          mode gets. The audio is saved in channel-audio next to the program
 //   cat    Radio control through Hamlib's dummy rig, or a real radio with --cat-port
 //   air    RadioConnector and a stand-in station over the sound cards (e.g. VB-Cable):
-//          receiving, a missing part, and sending with acks. Skipped without sound cards
+//          receiving, a missing part, and sending with acks; then connected-mode sessions
+//          with paging, two users at once, and a session the connector opens. Skipped
+//          without sound cards
 // RadioTests --help lists the options. On GitHub Actions, results also go to annotations
 // and the job summary.
 #include <algorithm>
@@ -34,6 +36,7 @@
 
 #include "../backend.h"
 #include "../Bluetooth/bt_protocol.h"
+#include "../Connector/agw.h"
 #include "../Connector/connector.h"
 #include "../Connector/connector_config.h"
 #include "../Radio/aioc.h"
@@ -41,6 +44,7 @@
 #include "../Radio/fsk.h"
 #include "../Radio/modem.h"
 #include "../Connector/packet.h"
+#include "../Connector/sessions.h"
 #include "../settings.h"
 #include "../testcases.h"
 #include "channel.h"
@@ -410,6 +414,10 @@ void testDirewolfConfig() {
     CHECK(vox.find("MYCALL N0CALL-7\n") != std::string::npos);
     CHECK(vox.find("KISSPORT 0\nKISSPORT 7001\n") != std::string::npos);
     CHECK(vox.find("AGWPORT 0\n") != std::string::npos);
+    CHECK(vox.find("PACLEN") == std::string::npos);
+    std::string agw = direwolfConfig(s, "1", "2", 7001, 7002, 180);   // The connector, for connected mode
+    CHECK(agw.find("AGWPORT 7002\nPACLEN 180\n") != std::string::npos);
+    CHECK(agw.find("KISSPORT 7001\n") != std::string::npos);
     CHECK(vox.find("PTT") == std::string::npos);           // VOX: direwolf mustn't key anything
     Settings vhf = s;
     vhf.packetBaud = 1200;
@@ -906,6 +914,400 @@ void testConnectorConfig() {
     CHECK(back.path == s.path && back.retryTries == 6 && back.holdForMain == 60);
     CHECK(back.mainAddress == "localhost:9000");
     CHECK(parseSettings("retry_tries=0\n").retryTries == 4);   // Out of range keeps the default
+
+    // Connected mode
+    Settings c;
+    Json connected = configToJson(c)["connected"];
+    CHECK(connected["enabled"] == true);   // On by default
+    CHECK(connected["maxSessions"] == 4 && connected["idleMinutes"] == 10 && connected["pageBytes"] == 1024);
+    change = applyConfig(c, {{"connected", {{"enabled", false}, {"maxSessions", 2}, {"pageBytes", 0}}}});
+    CHECK(change.ok && !change.restartRequired);
+    CHECK(!c.connectedEnabled && c.maxSessions == 2 && c.pageBytes == 0 && c.idleMinutes == 10);
+    CHECK(!parseSettings(formatSettings(c)).connectedEnabled);   // Off stays off in the file
+    CHECK(parseSettings("").connectedEnabled);                   // Files from before connected= get it on
+    change = applyConfig(c, {{"connected", {{"enabled", true}}}});
+    CHECK(change.ok && c.connectedEnabled);
+    CHECK(applyConfig(c, {{"connected", {{"maxSessions", 0}}}}).field == "connected.maxSessions");
+    CHECK(applyConfig(c, {{"connected", {{"pageBytes", 100}}}}).field == "connected.pageBytes");
+    CHECK(applyConfig(c, {{"connected", {{"enabled", "yes"}}}}).field == "connected.enabled");
+    CHECK(applyConfig(c, {{"connected", {{"busyText", "two\nlines"}}}}).field == "connected.busyText");
+    CHECK(applyConfig(c, {{"connected", {{"colour", 1}}}}).field == "connected.colour");
+    CHECK(applyConfig(c, {{"connected", {{"busyText", "Full up | try later"}}}}).ok);
+    Settings cBack = parseSettings(formatSettings(c));
+    CHECK(cBack.connectedEnabled && cBack.maxSessions == 2 && cBack.pageBytes == 0);
+    CHECK(cBack.busyText == "Full up | try later");
+    CHECK(parseSettings("page_bytes=50\n").pageBytes == 1024);   // Too small keeps the default
+    SessionOptions o = sessionOptions(c);
+    CHECK(o.enabled && o.maxSessions == 2 && o.chunkBytes == connectedChunkBytes(c.fx25, 0));
+    CHECK(static_cast<size_t>(direwolfPaclen(c)) >= o.chunkBytes);
+}
+
+// Connected mode
+
+void testAgwFrames() {
+    std::string bytes = agw::encode(agw::data("N0CALL-7", "K1ABC-3", "hi\r"));
+    CHECK(bytes.size() == agw::headerBytes + 3);
+    CHECK(bytes[4] == 'D' && static_cast<uint8_t>(bytes[6]) == agw::pidText);
+    CHECK(bytes.substr(8, 9) == std::string("N0CALL-7\0", 9));
+    CHECK(bytes[28] == 3 && bytes[29] == 0);   // Length, little endian
+
+    agw::Decoder decoder;
+    std::vector<agw::Frame> frames;
+    for (char c : bytes + agw::encode(agw::registerCall("N0CALL-7")))   // One byte at a time
+        for (agw::Frame& f : decoder.feed(std::string_view(&c, 1))) frames.push_back(f);
+    CHECK(frames.size() == 2);
+    CHECK(!frames.empty() && frames[0].kind == 'D' && frames[0].from == "N0CALL-7" &&
+          frames[0].to == "K1ABC-3" && frames[0].data == "hi\r");
+    CHECK(frames.size() > 1 && frames[1].kind == 'X' && frames[1].to.empty());
+
+    agw::Frame via = agw::connect("N0CALL-7", "K1ABC-3", {"WIDE1-1", "WIDE2-1"});
+    CHECK(via.kind == 'v' && via.data.size() == 21 && via.data[0] == 2);
+    CHECK(via.data.substr(11, 7) == "WIDE2-1");
+    CHECK(agw::connect("N0CALL-7", "K1ABC-3").kind == 'C');
+
+    agw::Frame y;
+    y.kind = 'Y';
+    y.data = std::string("\x05\x00\x00\x00", 4);
+    CHECK(agw::outstandingCount(y) == 5);
+    y.data.clear();
+    CHECK(agw::outstandingCount(y) == -1);
+
+    std::string broken = agw::encode(agw::registerCall("X"));
+    broken[30] = 0x7F;   // A length of 2 GB
+    agw::Decoder bad;
+    CHECK(bad.feed(broken).empty() && bad.broken());
+}
+
+void testPages() {
+    using connector::splitPages;
+    CHECK(splitPages("short", 1024).size() == 1);
+    CHECK(splitPages(std::string(5000, 'x'), 0).size() == 1);   // 0 = no paging
+    std::string text;
+    for (int i = 0; text.size() < 2500; i++) text += "word" + std::to_string(i) + " ";
+    auto pages = splitPages(text, 1024);
+    CHECK(pages.size() == 3);
+    std::string joined;
+    for (size_t i = 0; i < pages.size(); i++) {
+        CHECK(pages[i].size() <= 1024);
+        if (i + 1 < pages.size()) CHECK(pages[i].back() == ' ');   // Ends at a word
+        joined += pages[i];
+    }
+    CHECK(joined == text);
+    std::string accents;
+    while (accents.size() < 900) accents += "\xc3\xa9";   // No spaces: cut by bytes, never mid-character
+    for (const std::string& page : splitPages(accents, 301)) CHECK(connector::validUtf8(page));
+    CHECK(connector::toCrLines("a\nb\r\nc") == "a\rb\rc\r");
+    CHECK(connector::toCrLines("done\r") == "done\r");
+}
+
+// One Sessions with a stand-in direwolf: the AGW frames it sends are kept, and the test
+// answers for direwolf
+struct Link {
+    std::string call = "N0CALL-7";
+    std::unique_ptr<connector::Sessions> sessions;
+    std::vector<agw::Frame> sent;
+    std::vector<connector::Json> toMain;
+    connector::TimePoint now{};
+    size_t yAnswered = 0;   // sent[] up to here has had its 'Y' answered
+
+    explicit Link(connector::SessionOptions o = {}) {
+        sessions = std::make_unique<connector::Sessions>(connector::SessionHooks{
+            [this](const agw::Frame& f) {
+                sent.push_back(f);
+                return true;
+            },
+            [this](const connector::Json& m) { toMain.push_back(m); },
+            {}});
+        o.enabled = true;
+        o.callsign = call;
+        o.chunkBytes = 100;
+        sessions->setOptions(o, now);
+        sessions->setLinkUp(true, now);
+        sessions->setMainConnected(true, now);
+    }
+
+    void in(char kind, const std::string& peer, const std::string& data = "") {
+        agw::Frame f;
+        f.kind = kind;
+        f.from = peer;
+        f.to = call;
+        f.data = data;
+        sessions->onAgw(f, now);
+    }
+    void connect(const std::string& peer) { in('C', peer, "*** CONNECTED To Station " + peer + "\r"); }
+    void type(const std::string& peer, const std::string& line) { in('D', peer, line + "\r"); }
+
+    // direwolf has sent and had acked everything given to it so far
+    void settle() {
+        for (int round = 0; round < 1000; round++) {
+            bool answered = false;
+            while (yAnswered < sent.size()) {
+                const agw::Frame f = sent[yAnswered++];
+                if (f.kind != 'Y') continue;
+                agw::Frame reply;
+                reply.kind = 'Y';
+                reply.from = call;
+                reply.to = f.to;
+                reply.data = std::string(4, '\0');
+                sessions->onAgw(reply, now);
+                answered = true;
+            }
+            if (!answered) return;
+        }
+    }
+
+    void run(double seconds) {
+        auto end = now + std::chrono::duration_cast<connector::Clock::duration>(std::chrono::duration<double>(seconds));
+        while (now < end) {
+            now += std::chrono::seconds(1);
+            sessions->tick(now);
+        }
+    }
+
+    void sendText(const std::string& session, const std::string& text, const std::string& id = "m-1") {
+        sessions->send({{"session", session}, {"text", text}}, id, now);
+    }
+
+    std::vector<connector::Json> ofType(const std::string& type) const {
+        std::vector<connector::Json> out;
+        for (const connector::Json& m : toMain)
+            if (m["type"] == type) out.push_back(m);
+        return out;
+    }
+    std::vector<std::string> states() const {
+        std::vector<std::string> out;
+        for (const connector::Json& m : ofType("message.status")) out.push_back(m["body"]["state"]);
+        return out;
+    }
+    std::string textTo(const std::string& peer) const {
+        std::string text;
+        for (const agw::Frame& f : sent)
+            if (f.kind == 'D' && f.to == peer) text += f.data;
+        return text;
+    }
+    int framesTo(const std::string& peer, char kind, size_t from = 0) const {
+        int n = 0;
+        for (size_t i = from; i < sent.size(); i++)
+            if (sent[i].kind == kind && sent[i].to == peer) n++;
+        return n;
+    }
+};
+
+std::string withoutPrompts(std::string text) {
+    std::string prompt = connector::morePrompt;
+    for (size_t at; (at = text.find(prompt)) != std::string::npos;) text.erase(at, prompt.size());
+    return text;
+}
+
+void testSessionIncoming() {
+    Link link;
+    CHECK(!link.sent.empty() && link.sent[0].kind == 'X' && link.sent[0].from == "N0CALL-7");   // Registered
+    link.connect("K1ABC-3");
+    auto opened = link.ofType("session.opened");
+    CHECK(opened.size() == 1);
+    CHECK(!opened.empty() && opened[0]["body"]["session"] == "s-1" && opened[0]["body"]["direction"] == "in");
+    CHECK(link.sessions->count() == 1);
+
+    link.in('D', "K1ABC-3", "Hello th");   // A line can come in pieces
+    link.in('D', "K1ABC-3", "ere\r\n");
+    auto received = link.ofType("message.received");
+    CHECK(received.size() == 1);
+    CHECK(!received.empty() && received[0]["body"]["text"] == "Hello there");
+    CHECK(!received.empty() && received[0]["body"]["session"] == "s-1" && received[0]["body"]["from"] == "K1ABC-3");
+    CHECK(!received.empty() && !received[0].contains("id"));   // No ack needed
+
+    std::string text;
+    for (int i = 0; text.size() < 2500; i++) text += "Line " + std::to_string(i) + " of a long answer.\n";
+    link.sendText("s-1", text);
+    auto accepted = link.ofType("message.accepted");
+    CHECK(accepted.size() == 1 && accepted[0]["body"]["pages"] == 3 && accepted[0]["body"]["msgId"] == "s-1/t1");
+    // One window, then it waits for direwolf
+    CHECK(link.framesTo("K1ABC-3", 'D') == 4);
+    for (const agw::Frame& f : link.sent) CHECK(f.kind != 'D' || f.data.size() <= 100);
+    link.run(3);
+    CHECK(link.framesTo("K1ABC-3", 'D') == 4);
+    link.settle();
+    CHECK(link.states().back() == "paused");   // Page 1 is out; waiting for M
+    std::string firstPage = link.textTo("K1ABC-3");
+    CHECK(firstPage.find(connector::morePrompt) != std::string::npos);
+    link.type("K1ABC-3", "m");
+    link.settle();
+    CHECK(link.states().back() == "paused");
+    link.type("K1ABC-3", "MORE");
+    link.settle();
+    CHECK(link.states() == std::vector<std::string>({"queued", "sending", "paused", "sending", "paused",
+                                                     "sending", "received"}));
+    CHECK(withoutPrompts(link.textTo("K1ABC-3")) == connector::toCrLines(text));
+    CHECK(link.ofType("message.status").back()["body"]["pagesSent"] == 3);
+    CHECK(link.ofType("message.received").size() == 1);   // M isn't a prompt
+
+    link.type("K1ABC-3", "M");   // Nothing left
+    link.settle();
+    CHECK(link.textTo("K1ABC-3").find("Nothing more") != std::string::npos);
+}
+
+void testSessionTurns() {
+    Link link;
+    link.connect("K1ABC-3");
+    link.connect("W2XYZ-1");
+    std::string text(3000, 'a');
+    link.sendText("s-1", text, "m-1");
+    link.sendText("s-2", text, "m-2");
+    // Neither gets more than one window in direwolf ahead of the other
+    CHECK(link.framesTo("K1ABC-3", 'D') == 4);
+    CHECK(link.framesTo("W2XYZ-1", 'D') == 4);
+    link.settle();
+    CHECK(link.framesTo("K1ABC-3", 'D') > 4 && link.framesTo("W2XYZ-1", 'D') > 4);
+}
+
+void testSessionLimits() {
+    connector::SessionOptions o;
+    o.maxSessions = 2;
+    o.busyText = "Full, sorry";
+    Link link(o);
+    link.connect("K1ABC-3");
+    link.connect("W2XYZ-1");
+    link.connect("KD9QQQ");
+    CHECK(link.ofType("session.opened").size() == 2);   // The third is never seen
+    CHECK(link.sessions->count() == 2);
+    CHECK(link.textTo("KD9QQQ") == "Full, sorry\r");
+    CHECK(link.framesTo("KD9QQQ", 'd') == 0);   // Not until it's acked: direwolf drops unsent text
+    link.settle();
+    CHECK(link.framesTo("KD9QQQ", 'd') == 1);
+    link.type("KD9QQQ", "hello?");
+    link.in('d', "KD9QQQ", "*** DISCONNECTED From Station KD9QQQ\r");
+    CHECK(link.ofType("message.received").empty() && link.ofType("session.closed").empty());
+
+    connector::Json open = {{"to", "N1NEW"}};
+    link.sessions->open(open, "m-9", link.now);
+    CHECK(link.toMain.back()["type"] == "error" && link.toMain.back()["body"]["code"] == "too_many_sessions");
+
+    // The same station connecting again replaces its session
+    link.connect("W2XYZ-1");
+    auto closed = link.ofType("session.closed");
+    CHECK(closed.size() == 1 && closed[0]["body"]["session"] == "s-2" && closed[0]["body"]["reason"] == "replaced");
+    CHECK(link.ofType("session.opened").back()["body"]["session"] == "s-4");
+
+    // Idle: told, then disconnected once that's acked
+    link.run(9 * 60);
+    CHECK(link.framesTo("K1ABC-3", 'd') == 0);
+    link.run(61);
+    CHECK(link.textTo("K1ABC-3").find("idle") != std::string::npos);
+    link.settle();
+    CHECK(link.framesTo("K1ABC-3", 'd') == 1);
+    link.in('d', "K1ABC-3", "*** DISCONNECTED From Station K1ABC-3\r");
+    CHECK(link.ofType("session.closed").back()["body"]["reason"] == "idle");
+}
+
+void testSessionCommands() {
+    Link link;
+    link.connect("K1ABC-3");
+    link.sendText("s-1", std::string(2500, 'z'));
+    link.settle();
+    CHECK(link.states().back() == "paused");
+    link.type("K1ABC-3", "What about tomorrow?");   // A new prompt instead of M
+    CHECK(link.states().back() == "skipped");
+    CHECK(link.ofType("message.received").back()["body"]["text"] == "What about tomorrow?");
+
+    link.sendText("s-1", std::string(2500, 'y'), "m-2");
+    link.settle();
+    link.type("K1ABC-3", "n");
+    CHECK(link.states().back() == "skipped");
+    auto fresh = link.ofType("session.new");
+    CHECK(fresh.size() == 1 && fresh[0]["body"]["session"] == "s-1");
+
+    link.type("K1ABC-3", "bye");
+    CHECK(link.framesTo("K1ABC-3", 'd') == 1);
+    link.in('d', "K1ABC-3", "*** DISCONNECTED From Station K1ABC-3\r");
+    CHECK(link.ofType("session.closed").back()["body"]["reason"] == "bye");
+    CHECK(link.sessions->count() == 0);
+
+    // With the main program away: a prompt gets a notice, and a new connect is turned away
+    link.connect("W2XYZ-1");
+    link.sessions->setMainConnected(false, link.now);
+    link.type("W2XYZ-1", "anyone there?");
+    CHECK(link.textTo("W2XYZ-1").find("offline") != std::string::npos);
+    link.connect("KD9QQQ");
+    CHECK(link.textTo("KD9QQQ").find("offline") != std::string::npos);
+    link.sessions->setMainConnected(true, link.now);   // Open sessions are announced again
+    CHECK(link.ofType("session.opened").back()["body"]["peer"] == "W2XYZ-1");
+
+    // Remote hang-up and a lost link
+    link.in('d', "W2XYZ-1", "*** DISCONNECTED RETRYOUT With W2XYZ-1\r");
+    CHECK(link.ofType("session.closed").back()["body"]["reason"] == "link_lost");
+}
+
+void testSessionOutgoing() {
+    connector::SessionOptions o;
+    o.path = {"WIDE1-1"};
+    Link link(o);
+    link.sessions->open({{"to", "n0call-7"}}, "m-1", link.now);
+    CHECK(link.toMain.back()["body"]["field"] == "to");   // Ourselves
+    link.sessions->open({{"to", "k1abc-3"}}, "m-2", link.now);
+    CHECK(link.toMain.back()["type"] == "session.opening" && link.toMain.back()["re"] == "m-2");
+    CHECK(link.toMain.back()["body"]["session"] == "s-1" && link.toMain.back()["body"]["peer"] == "K1ABC-3");
+    CHECK(!link.sent.empty() && link.sent.back().kind == 'v' && link.sent.back().to == "K1ABC-3");   // Through WIDE1-1
+    link.sendText("s-1", "Queued until it's open");
+    CHECK(link.framesTo("K1ABC-3", 'D') == 0);
+    link.in('C', "K1ABC-3", "*** CONNECTED With Station K1ABC-3\r");
+    auto opened = link.ofType("session.opened");
+    CHECK(opened.size() == 1 && opened[0]["body"]["direction"] == "out");
+    CHECK(link.textTo("K1ABC-3") == "Queued until it's open\r");
+
+    link.sessions->close({{"session", "s-1"}, {"text", "73!"}}, "m-3", link.now);
+    CHECK(link.toMain.back()["type"] == "session.closing");
+    CHECK(link.framesTo("K1ABC-3", 'd') == 0);   // Not before the 73 is out and acked
+    link.settle();
+    CHECK(link.textTo("K1ABC-3") == "Queued until it's open\r73!\r");
+    CHECK(link.framesTo("K1ABC-3", 'd') == 1);
+    link.in('d', "K1ABC-3", "*** DISCONNECTED From Station K1ABC-3\r");
+    CHECK(link.ofType("session.closed").back()["body"]["reason"] == "closed");
+
+    // No answer: direwolf gives up and says so
+    link.sessions->open({{"to", "W2XYZ-1"}, {"path", connector::Json::array()}}, "m-4", link.now);
+    CHECK(link.sent.back().kind == 'C');   // An empty path: direct
+    link.in('d', "W2XYZ-1", "*** DISCONNECTED RETRYOUT With W2XYZ-1\r");
+    CHECK(link.ofType("session.closed").back()["body"]["reason"] == "no_answer");
+
+    link.sessions->send({{"session", "s-9"}, {"text", "x"}}, "m-5", link.now);
+    CHECK(link.toMain.back()["body"]["field"] == "session");
+
+    // Turned off: no new sessions, and open ones close
+    link.connect("KD9QQQ");
+    connector::SessionOptions off = link.sessions->options();
+    off.enabled = false;
+    link.sessions->setOptions(off, link.now);
+    CHECK(link.ofType("session.closed").back()["body"]["reason"] == "disabled");
+    CHECK(link.sent.back().kind == 'd' || link.sent.back().kind == 'x');
+    link.sessions->open({{"to", "KD9QQQ"}}, "m-6", link.now);
+    CHECK(link.toMain.back()["body"]["code"] == "connected_off");
+}
+
+void testSessionRadioDown() {
+    Link link;
+    link.connect("K1ABC-3");
+    link.sendText("s-1", std::string(500, 'q'));
+    link.sessions->setLinkUp(false, link.now);
+    CHECK(link.ofType("session.closed").back()["body"]["reason"] == "radio_down");
+    CHECK(link.states().back() == "failed");
+    CHECK(link.sessions->count() == 0);
+    size_t before = link.sent.size();
+    link.sessions->setLinkUp(true, link.now);
+    CHECK(link.sent.size() == before + 1 && link.sent.back().kind == 'X');   // Registered again
+}
+
+// A connected user typing "RC1|..." mustn't reach the RC1 engine
+void testConnectorIgnoresIFrames() {
+    Air air;
+    packet::Frame frame{"K1ABC-3", "N0CALL-7", {}, "RC1|D|001|1/1|sneaky"};
+    frame.ui = false;
+    air.a.engine->onFrame(frame, air.now);
+    air.run(5);
+    CHECK(Air::ofType(air.a, "message.received").empty());
+    frame.ui = true;
+    air.a.engine->onFrame(frame, air.now);
+    air.run(5);
+    CHECK(Air::ofType(air.a, "message.received").size() == 1);
 }
 
 // Bluetooth audio (protocol only; no radio needed)
@@ -1147,6 +1549,15 @@ int runUnit() {
         {"Connector waits at 300 baud before acking", testConnectorSlowAck},
         {"Connector request errors", testConnectorRequests},
         {"Connector config", testConnectorConfig},
+        {"Connector ignores I frames", testConnectorIgnoresIFrames},
+        {"AGW frames", testAgwFrames},
+        {"Connected mode pages", testPages},
+        {"Connected session in, with paging", testSessionIncoming},
+        {"Connected sessions take turns", testSessionTurns},
+        {"Connected session limits, busy and idle", testSessionLimits},
+        {"Connected session commands and offline", testSessionCommands},
+        {"Connected session out, close and no answer", testSessionOutgoing},
+        {"Connected sessions when the radio stops", testSessionRadioDown},
         {"Bluetooth addresses and UUIDs", testBtAddresses},
         {"Bluetooth audio framing", testBtAudioFraming},
         {"Bluetooth GAIA control frames", testBtGaia},
@@ -1286,10 +1697,13 @@ int runCat(const Options& options) {
 using Clock = std::chrono::steady_clock;
 
 // What the test hears: JSON lines from the connector, and frames from the stand-in station
+// (KISS frames, and AGW frames for its connected-mode sessions)
 struct Heard {
     bool frame = false;
     string line;
     packet::Frame packet;
+    bool isAgw = false;
+    agw::Frame agwFrame;
 };
 
 class Inbox {
@@ -1391,6 +1805,8 @@ public:
         connector.stop(std::chrono::seconds(10));
         peerLink.shutdown();
         if (peerReader.joinable()) peerReader.join();
+        peerAgw.shutdown();
+        if (peerAgwReader.joinable()) peerAgwReader.join();
         peer.stop();
         std::error_code ec;
         if (!workDir.empty()) std::filesystem::remove_all(workDir, ec);
@@ -1414,6 +1830,7 @@ public:
         string base = baseCallsign(options.callsign.empty() ? settings.callsign : options.callsign);
         connectorCall = base + "-14";
         peerCall = base + "-15";
+        peerCall2 = base + "-13";   // A second connected-mode user on the stand-in station
 
         std::random_device random;
         workDir = std::filesystem::temp_directory_path() / ("radio-tests-" + std::to_string(random() % 1000000));
@@ -1431,13 +1848,17 @@ public:
         station.audioFile.clear();
         station.path.clear();
 
-        // The stand-in station: its own direwolf, driven over KISS by this program
+        // The stand-in station: its own direwolf, driven over KISS (RC1) and AGW (connected
+        // mode) by this program
         Settings peerSettings = station;
         peerSettings.callsign = peerCall;
         int peerPort = os::freeTcpPort();
+        int peerAgwPort = os::freeTcpPort();
+        while (peerAgwPort == peerPort) peerAgwPort = os::freeTcpPort();
         {
             std::ofstream out(workDir / "peer.conf");
-            out << direwolfConfig(peerSettings, direwolfDevice(rx, false), direwolfDevice(tx, true), peerPort);
+            out << direwolfConfig(peerSettings, direwolfDevice(rx, false), direwolfDevice(tx, true), peerPort,
+                                  peerAgwPort, connector::direwolfPaclen(peerSettings));
         }
         if (!peer.start(direwolfArgs("peer.conf"), workDir.string()))
             return failSetup("couldn't start direwolf: " + peer.error());
@@ -1454,6 +1875,20 @@ public:
                 for (const packet::Bytes& bytes : decoder.feed(std::string_view(buffer, static_cast<size_t>(n))))
                     if (auto frame = packet::decode(bytes)) inbox.push({true, {}, *frame});
         });
+        while (!peerAgw.connect("127.0.0.1", peerAgwPort)) {
+            if (Clock::now() > deadline) return failSetup("direwolf didn't open its AGW port:\n" + peer.log());
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+        peerAgwReader = std::thread([this] {
+            agw::Decoder decoder;
+            char buffer[2048];
+            long n;
+            while ((n = peerAgw.read(buffer, sizeof buffer)) > 0)
+                for (agw::Frame& frame : decoder.feed(std::string_view(buffer, static_cast<size_t>(n))))
+                    inbox.push({false, {}, {}, true, std::move(frame)});
+        });
+        peerSend(agw::registerCall(peerCall));
+        peerSend(agw::registerCall(peerCall2));
 
         // The connector, with this program as its main program
         int mainPort = os::freeTcpPort();
@@ -1579,6 +2014,123 @@ public:
         return true;
     }
 
+    // Connected mode on, then the stand-in station connects, types a line, and reads a
+    // two-page reply, asking for the second page with M
+    bool sessionPaging() {
+        mark();
+        sendToConnector({{"v", 1}, {"type", "config.set"}, {"id", "t-c1"},
+                         {"body", {{"config", {{"connected", {{"enabled", true}, {"pageBytes", 300}}}}}}}});
+        bool on = waitFor(seconds(), [&] {
+            return findLine("config", [](const connector::Json& body) {
+                return body["config"]["connected"].value("enabled", false);
+            }) != nullptr;
+        });
+        if (!on) return fail("config.set didn't turn connected mode on");
+        peerSend(agw::connect(peerCall, connectorCall));
+        const connector::Json* opened = nullptr;
+        bool ok = waitFor(seconds(), [&] {
+            opened = findLine("session.opened", [&](const connector::Json& body) {
+                return body.value("peer", "") == peerCall;
+            });
+            return opened != nullptr;
+        });
+        if (!ok) return fail("no session.opened after the stand-in station connected");
+        firstSession = (*opened)["body"].value("session", "");
+        // direwolf drops text for a link it's still opening, so wait as a person would
+        if (!waitFor(seconds(), [&] { return peerConnected(peerCall); }))
+            return fail("the stand-in station's direwolf never said it was connected");
+
+        peerSend(agw::data(peerCall, connectorCall, "Hello repeater\r"));
+        if (!waitFor(seconds(), [&] { return heardLine(firstSession, "Hello repeater"); }))
+            return fail("the line typed never reached the main program as message.received");
+
+        string text;
+        for (int i = 1; text.size() < 500; i++) text += "Answer line " + std::to_string(i) + ", from the main program.\n";
+        sendToConnector({{"v", 1}, {"type", "message.send"}, {"id", "t-c2"},
+                         {"body", {{"session", firstSession}, {"text", text}}}});
+        if (!waitFor(seconds() * 2, [&] { return sessionText(peerCall).find(connector::morePrompt) != string::npos; }))
+            return fail("the first page never arrived with the [M]ore prompt (got " +
+                        std::to_string(sessionText(peerCall).size()) + " bytes)");
+        if (!waitFor(seconds(), [&] { return sessionStatus(firstSession, "paused"); }))
+            return fail("the reply didn't pause after the first page");
+        peerSend(agw::data(peerCall, connectorCall, "M\r"));
+        if (!waitFor(seconds() * 2, [&] { return sessionStatus(firstSession, "received"); }))
+            return fail("the reply never got to received after M");
+        if (withoutPrompts(sessionText(peerCall)) != connector::toCrLines(text))
+            return fail("the pages didn't join back into the reply sent");
+        return true;
+    }
+
+    // A second user connects while the first is still on; both ask and both get their
+    // own answer, then both say bye
+    bool twoUsers() {
+        mark();
+        if (firstSession.empty()) return fail("needs the session from the step before");
+        peerSend(agw::connect(peerCall2, connectorCall));
+        const connector::Json* opened = nullptr;
+        bool ok = waitFor(seconds(), [&] {
+            opened = findLine("session.opened", [&](const connector::Json& body) {
+                return body.value("peer", "") == peerCall2;
+            });
+            return opened != nullptr;
+        });
+        if (!ok) return fail("no session.opened for the second user");
+        string second = (*opened)["body"].value("session", "");
+        if (!waitFor(seconds(), [&] { return peerConnected(peerCall2); }))
+            return fail("the stand-in station's direwolf never said the second user was connected");
+
+        peerSend(agw::data(peerCall, connectorCall, "Question one\r"));
+        peerSend(agw::data(peerCall2, connectorCall, "Question two\r"));
+        if (!waitFor(seconds(), [&] { return heardLine(firstSession, "Question one") && heardLine(second, "Question two"); }))
+            return fail("both questions didn't reach the main program");
+        string one, two;
+        for (int i = 1; one.size() < 250; i++) one += "For user one, line " + std::to_string(i) + ". ";
+        for (int i = 1; two.size() < 250; i++) two += "For user two, line " + std::to_string(i) + ". ";
+        sendToConnector({{"v", 1}, {"type", "message.send"}, {"id", "t-c3"},
+                         {"body", {{"session", firstSession}, {"text", one}}}});
+        sendToConnector({{"v", 1}, {"type", "message.send"}, {"id", "t-c4"},
+                         {"body", {{"session", second}, {"text", two}}}});
+        if (!waitFor(seconds() * 3, [&] { return sessionStatus(firstSession, "received") && sessionStatus(second, "received"); }))
+            return fail("both answers didn't get to received (user one " + std::to_string(sessionText(peerCall).size()) +
+                        " bytes, user two " + std::to_string(sessionText(peerCall2).size()) + " bytes)");
+        if (sessionText(peerCall) != connector::toCrLines(one) || sessionText(peerCall2) != connector::toCrLines(two))
+            return fail("an answer went to the wrong user, or came out changed");
+
+        peerSend(agw::data(peerCall, connectorCall, "B\r"));
+        peerSend(agw::data(peerCall2, connectorCall, "bye\r"));
+        if (!waitFor(seconds() * 2, [&] { return sessionClosed(firstSession, "bye") && sessionClosed(second, "bye"); }))
+            return fail("both sessions didn't close with reason bye");
+        return true;
+    }
+
+    // The main program opens a session to the stand-in station, then closes it with a 73
+    bool connectsOut() {
+        mark();
+        sendToConnector({{"v", 1}, {"type", "session.open"}, {"id", "t-c5"}, {"body", {{"to", peerCall}}}});
+        const connector::Json* opened = nullptr;
+        bool ok = waitFor(seconds(), [&] {
+            opened = findLine("session.opened", [&](const connector::Json& body) {
+                return body.value("peer", "") == peerCall && body.value("direction", "") == "out";
+            });
+            return opened != nullptr;
+        });
+        if (!ok) {
+            if (auto* error = findLine("error", [](const connector::Json&) { return true; }))
+                return fail("session.open failed: " + (*error)["body"].value("message", ""));
+            return fail("no session.opened (direction out) after session.open");
+        }
+        string session = (*opened)["body"].value("session", "");
+        if (!peerConnected(peerCall) && !waitFor(seconds(), [&] { return peerConnected(peerCall); }))
+            return fail("the stand-in station never heard the connect");
+        sendToConnector({{"v", 1}, {"type", "session.close"}, {"id", "t-c6"},
+                         {"body", {{"session", session}, {"text", "73 from the repeater"}}}});
+        if (!waitFor(seconds() * 2, [&] { return sessionClosed(session, "closed"); }))
+            return fail("no session.closed after session.close");
+        if (sessionText(peerCall) != "73 from the repeater\r")
+            return fail("the stand-in station got \"" + sessionText(peerCall) + "\", not the 73");
+        return true;
+    }
+
     const string& lastProblem() const { return problem; }
     string connectorLog() { return connector.log(); }
 
@@ -1599,6 +2151,50 @@ private:
     void mark() {
         lineStart = lines.size();
         frameStart = frames.size();
+        agwStart = agwFrames.size();
+    }
+
+    void peerSend(const agw::Frame& frame) { peerAgw.write(agw::encode(frame)); }
+
+    // Session text the stand-in station got from the connector, for one of its callsigns
+    string sessionText(const string& to) const {
+        string text;
+        for (size_t i = agwStart; i < agwFrames.size(); i++) {
+            const agw::Frame& f = agwFrames[i];
+            if (f.kind == 'D' && packet::normalizeCallsign(f.from) == connectorCall &&
+                packet::normalizeCallsign(f.to) == to)
+                text += f.data;
+        }
+        return text;
+    }
+
+    // The stand-in station's direwolf says a session with the connector is open
+    bool peerConnected(const string& call) const {
+        for (size_t i = agwStart; i < agwFrames.size(); i++) {
+            const agw::Frame& f = agwFrames[i];
+            if (f.kind == 'C' && packet::normalizeCallsign(f.from) == connectorCall &&
+                packet::normalizeCallsign(f.to) == call)
+                return true;
+        }
+        return false;
+    }
+
+    bool heardLine(const string& session, const string& text) {
+        return findLine("message.received", [&](const connector::Json& body) {
+            return body.value("session", "") == session && body.value("text", "") == text;
+        }) != nullptr;
+    }
+
+    bool sessionStatus(const string& session, const string& state) {
+        return findLine("message.status", [&](const connector::Json& body) {
+            return body.value("session", "") == session && body.value("state", "") == state;
+        }) != nullptr;
+    }
+
+    bool sessionClosed(const string& session, const string& reason) {
+        return findLine("session.closed", [&](const connector::Json& body) {
+            return body.value("session", "") == session && body.value("reason", "") == reason;
+        }) != nullptr;
     }
 
     bool waitFor(Clock::duration limit, const std::function<bool()>& done) {
@@ -1608,7 +2204,9 @@ private:
             if (now >= deadline) return false;
             auto heard = inbox.pop(std::min<Clock::duration>(deadline - now, std::chrono::milliseconds(200)));
             if (!heard) continue;
-            if (heard->frame) {
+            if (heard->isAgw) {
+                agwFrames.push_back(std::move(heard->agwFrame));
+            } else if (heard->frame) {
                 frames.push_back(heard->packet);
             } else {
                 connector::Json json = connector::Json::parse(heard->line, nullptr, false);
@@ -1644,16 +2242,18 @@ private:
     void sendToConnector(const connector::Json& message) { mainLink.write(message.dump() + "\n"); }
 
     const Options& options;
-    string program, connectorCall, peerCall, problem;
+    string program, connectorCall, peerCall, peerCall2, problem;
+    string firstSession;   // From sessionPaging, for twoUsers
     std::filesystem::path workDir;
     bool brokenSetup = false;
     Child peer, connector;
-    os::TcpConnection peerLink, mainLink;
-    std::thread peerReader, mainReader;
+    os::TcpConnection peerLink, mainLink, peerAgw;
+    std::thread peerReader, mainReader, peerAgwReader;
     Inbox inbox;
     std::vector<connector::Json> lines;
     std::vector<packet::Frame> frames;
-    size_t lineStart = 0, frameStart = 0;
+    std::vector<agw::Frame> agwFrames;
+    size_t lineStart = 0, frameStart = 0, agwStart = 0;
 };
 
 int runAir(const Options& options) {
@@ -1678,6 +2278,9 @@ int runAir(const Options& options) {
         {"Receives a message in two parts, acks it, and sends OK", &AirTest::receives},
         {"Acks the parts it has when one is missing", &AirTest::missingPart},
         {"Sends a long message and reports it delivered", &AirTest::sends},
+        {"Connected: a session in, with a two-page reply", &AirTest::sessionPaging},
+        {"Connected: two users at once, then both say bye", &AirTest::twoUsers},
+        {"Connected: opens a session out and closes it with a 73", &AirTest::connectsOut},
     };
     int failed = 0;
     string summary = "### Over the air (" + runnerName() + ")\n\n| Result | Step |\n|---|---|\n";

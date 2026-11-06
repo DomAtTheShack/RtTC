@@ -1,5 +1,8 @@
 # Radio Connector protocol
 
+> Connected mode ([connected-mode.md](connected-mode.md)) is now the main way to reach the
+> connector. `RC1`, below, still works but only gets fixes, and is planned for removal.
+
 The code is `src/Connector/radio_connector.cpp`, `connector.cpp` and
 `connector_config.cpp`. Design choices are listed at the end. See also
 [ack-guide.md](ack-guide.md) (how the acks work, with the code) and

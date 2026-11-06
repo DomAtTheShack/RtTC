@@ -127,6 +127,7 @@ std::optional<Frame> decode(const Bytes& frame) {
         out.path.push_back(readAddress(address) + ((address[6] & 0x80) ? "*" : ""));
     }
     out.info.assign(frame.begin() + static_cast<long>(control + 2), frame.end());
+    out.ui = uiFrame;
     return out;
 }
 

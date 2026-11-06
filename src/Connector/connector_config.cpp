@@ -97,6 +97,11 @@ Json configToJson(const Settings& s) {
         {"retry", {{"tries", s.retryTries}, {"extraWaitSeconds", s.retryExtraWait}}},
         {"holdForMainSeconds", s.holdForMain},
         {"main", s.mainAddress},
+        {"connected", {{"enabled", s.connectedEnabled},
+                       {"maxSessions", s.maxSessions},
+                       {"idleMinutes", s.idleMinutes},
+                       {"pageBytes", s.pageBytes},
+                       {"busyText", s.busyText}}},
     };
 }
 
@@ -259,6 +264,36 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
             if (!value.is_string() || !parseHostPort(value.get<std::string>(), host, port))
                 return fail(key, "must be host:port, e.g. 127.0.0.1:9000");
             s.mainAddress = value.get<std::string>();
+        } else if (key == "connected") {
+            if (!value.is_object()) return fail(key, "must be an object");
+            for (const auto& [field, fieldValue] : value.items()) {
+                std::string name = "connected." + field;
+                if (field == "enabled") {
+                    if (!fieldValue.is_boolean()) return fail(name, "must be true or false");
+                    s.connectedEnabled = fieldValue.get<bool>();
+                } else if (field == "maxSessions") {
+                    auto n = intIn(fieldValue, 1, 16);
+                    if (!n) return fail(name, "must be 1 to 16");
+                    s.maxSessions = *n;
+                } else if (field == "idleMinutes") {
+                    auto n = intIn(fieldValue, 0, 1440);
+                    if (!n) return fail(name, "must be 0 (never) to 1440");
+                    s.idleMinutes = *n;
+                } else if (field == "pageBytes") {
+                    auto n = intIn(fieldValue, 0, 65536);
+                    if (!n || (*n > 0 && *n < 200)) return fail(name, "must be 0 (no paging) or 200 to 65536");
+                    s.pageBytes = *n;
+                } else if (field == "busyText") {
+                    if (!fieldValue.is_string() || fieldValue.get<std::string>().empty() ||
+                        fieldValue.get<std::string>().size() > 200 || !validUtf8(fieldValue.get<std::string>()))
+                        return fail(name, "must be 1 to 200 bytes of text");
+                    std::string text = fieldValue.get<std::string>();
+                    if (text.find_first_of("\r\n") != std::string::npos) return fail(name, "must be one line");
+                    s.busyText = text;
+                } else {
+                    return fail(name, "unknown setting");
+                }
+            }
         } else {
             return fail(key, "unknown setting");
         }
@@ -305,6 +340,23 @@ bool parseHostPort(const std::string& text, std::string& host, int& port) {
     if (port < 1 || port > 65535) return false;
     if (host == "localhost") host = "127.0.0.1";
     return validIpv4(host);   // TcpConnection takes IP addresses only
+}
+
+SessionOptions sessionOptions(const Settings& s) {
+    SessionOptions o;
+    o.enabled = s.connectedEnabled;
+    o.callsign = packet::normalizeCallsign(s.callsign);
+    o.path = s.path;
+    o.maxSessions = s.maxSessions;
+    o.idleMinutes = s.idleMinutes;
+    o.pageBytes = static_cast<size_t>(s.pageBytes);
+    o.busyText = s.busyText;
+    o.chunkBytes = connectedChunkBytes(s.fx25, s.path.size());
+    return o;
+}
+
+int direwolfPaclen(const Settings& s) {
+    return static_cast<int>(packet::maxInfoFor(s.fx25));
 }
 
 Options engineOptions(const Settings& s) {

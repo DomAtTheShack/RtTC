@@ -1,5 +1,8 @@
 # RC1 test messages for the menu program
 
+> `RC1` is being replaced by connected mode ([connected-mode.md](connected-mode.md)) and
+> will be removed; these tests go with it. RadioConnectorCli itself stays, with raw KISS.
+
 Type these lines in the menu program (RadioConnectorCli) to test the Radio Connector's ACKs
 over the air, with no main program needed. How the ACKs work is in [ack-guide.md](ack-guide.md).
 

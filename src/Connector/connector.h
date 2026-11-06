@@ -50,9 +50,13 @@ std::optional<std::vector<int>> parseRanges(std::string_view text);
 
 // Text bytes per part: the packet limit for this FX.25 mode and path, minus our header
 size_t partBytes(int fx25, size_t pathHops);
+// Text bytes per connected-mode I frame: the same limit, with no RC1 header
+size_t connectedChunkBytes(int fx25, size_t pathHops);
 // Fills each part to maxBytes, never cutting a UTF-8 character
 std::vector<std::string> splitParts(std::string_view text, size_t maxBytes);
 bool validUtf8(std::string_view text);
+// Now, as "2026-10-28T15:02:11Z"
+std::string utcNow();
 
 // Envelope
 
