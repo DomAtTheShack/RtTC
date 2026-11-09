@@ -43,7 +43,7 @@ using namespace std::chrono_literals;
 
 namespace {
 
-const char* const programVersion = "0.1.0";
+const char* const programVersion = "0.1.1";
 constexpr size_t maxLineBytes = 64 * 1024;
 constexpr auto reconnectDelay = 5s;
 constexpr auto direwolfStartLimit = 15s;

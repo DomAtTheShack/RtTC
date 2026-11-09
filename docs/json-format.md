@@ -182,7 +182,7 @@ On every connect (and reconnect) the connector sends, in this order:
 
 ```json
 {"v":1,"type":"hello","id":"c-hello","re":null,"body":{
-  "program":"radio-connector","version":"0.1.0","instance":"N0CALL-7",
+  "program":"radio-connector","version":"0.1.1","instance":"N0CALL-7",
   "capabilities":["ax25","fx25","connected"],"config":{},"radio":"ready"}}
 ```
 
@@ -571,7 +571,7 @@ the line couldn't be read).
 `>` is the connector, `<` the main program.
 
 ```
-> {"v":1,"type":"hello","id":"c-hello","re":null,"body":{"program":"radio-connector","version":"0.1.0","instance":"N0CALL-7","capabilities":["ax25","fx25","connected"],"config":{...},"radio":"ready"}}
+> {"v":1,"type":"hello","id":"c-hello","re":null,"body":{"program":"radio-connector","version":"0.1.1","instance":"N0CALL-7","capabilities":["ax25","fx25","connected"],"config":{...},"radio":"ready"}}
 > {"v":1,"type":"radio.status","re":null,"body":{"state":"ready","direwolf":"running","ptt":"vox","txQueue":0,"inFlight":0,"heldForMain":0,"sessions":0,"lastHeard":null,"error":null}}
 < {"v":1,"type":"message.send","id":"m-1","body":{"to":"K1ABC-3","text":"Hello"}}
 > {"v":1,"type":"message.accepted","re":"m-1","body":{"msgId":"N0CALL-7/03F","parts":1}}

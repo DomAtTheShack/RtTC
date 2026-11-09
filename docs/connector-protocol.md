@@ -66,7 +66,7 @@ Errors, sent as a reply to any request:
 **`hello`**, sent right after connecting:
 ```json
 {"v":1,"type":"hello","id":"c-hello","body":{
-  "program":"radio-connector","version":"0.1.0","instance":"N0CALL-7",
+  "program":"radio-connector","version":"0.1.1","instance":"N0CALL-7",
   "capabilities":["ax25","fx25"],
   "config":{ ...cached config, see section 5... },
   "radio":"ready"}}
