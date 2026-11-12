@@ -54,9 +54,41 @@ void showMessage(const string& title, const string& text) {
     ansi::waitKey();
 }
 
+// settings.ini, settings-2.ini, ... (whichever no other running copy has), or --settings
+string settingsFile;
+
 void save(const Settings& settings) {
-    if (!saveSettings(settings))
-        showMessage("Settings not saved", "Could not write " + settingsPath());
+    if (!saveSettingsTo(settings, settingsFile))
+        showMessage("Settings not saved", "Could not write " + settingsFile);
+}
+
+// Sets settingsFile and loads it. given: --settings, else "". Each running copy locks its
+// file (file.lock), so a second copy takes settings-2.ini, a third settings-3.ini, ...
+// A new one starts as a copy of settings.ini with the next free SSID (-1 is the Radio
+// Connector's), so it's a different station
+Settings loadOwnSettings(const string& given) {
+    if (!given.empty()) {
+        settingsFile = given;
+        os::lockForLife(given + ".lock");   // So an auto-picking copy skips it
+        return loadSettingsFrom(given);
+    }
+    std::error_code ec;
+    fs::create_directories(fs::path(settingsPath()).parent_path(), ec);
+    for (int copy = 1; copy <= 15; copy++) {
+        string path = settingsPath(copy);
+        if (!os::lockForLife(path + ".lock")) continue;
+        settingsFile = path;
+        bool found = false;
+        Settings settings = loadSettingsFrom(path, &found);
+        if (found || copy == 1) return settings;
+        settings = loadSettings();
+        settings.callsign = packet::otherSsid(settings.callsign, copy);
+        saveSettingsTo(settings, path);   // If it can't, save() says so later
+        return settings;
+    }
+    // Locks unavailable: share settings.ini, as before
+    settingsFile = settingsPath();
+    return loadSettings();
 }
 
 // Pads name so values line up in a column
@@ -451,12 +483,12 @@ TransmitFormat genPacketsFormat(const string& callsign, const string& destinatio
 }
 
 // direwolf truncates -c paths at 99 characters, so it runs from the config's folder
-const char* const direwolfConfigName = "radio-to-text-direwolf.conf";
-
-// Writes direwolf's config to the temp folder. Empty (after saying why) if it can't
+// Writes direwolf's config to the temp folder, named after this run's port so two copies
+// of the program don't share one. Empty (after saying why) if it can't
 fs::path writeDirewolfConfig(const Settings& settings, const string& rxName, const string& txName,
                              int kissPort, int agwPort = 0, int paclen = 0) {
-    fs::path config = fs::temp_directory_path() / direwolfConfigName;
+    fs::path config = fs::temp_directory_path() /
+        ("radio-to-text-direwolf-" + std::to_string(agwPort > 0 ? agwPort : kissPort) + ".conf");
     std::ofstream out(config, std::ios::trunc);
     bool cable = settings.ptt == PttType::Aioc;
     out << direwolfConfig(settings, direwolfDevice(rxName, false, cable), direwolfDevice(txName, true, cable),
@@ -489,7 +521,7 @@ bool runDirewolf(const Settings& settings, const string& rxName, const string& t
     }
     fs::path config = writeDirewolfConfig(settings, rxName, txName, kissPort);
     if (config.empty()) return false;
-    session.direwolfArgs = direwolfArgs(direwolfConfigName);
+    session.direwolfArgs = direwolfArgs(config.filename().string());
     session.workingDir = config.parent_path().string();
     session.kissPort = kissPort;
     session.callsign = settings.callsign;
@@ -512,7 +544,7 @@ bool runConnectedDirewolf(const Settings& settings, const string& rxName, const 
                                           connector::direwolfPaclen(settings));
     if (config.empty()) return false;
     ConnectedSession session;
-    session.direwolfArgs = direwolfArgs(direwolfConfigName);
+    session.direwolfArgs = direwolfArgs(config.filename().string());
     session.workingDir = config.parent_path().string();
     session.agwPort = agwPort;
     session.callsign = settings.callsign;
@@ -1170,30 +1202,47 @@ void testMenu(Settings& settings) {
 } // namespace
 
 int main(int argc, char** argv) {
-    Settings settings = loadSettings();
-
-    if (argc > 2 || (argc == 2 && argv[1][0] == '-')) {
-        std::fprintf(stderr, "Usage: %s [file.wav]\n"
-                     "  file.wav  decode the packets in this file, then quit\n", argv[0]);
+    string wavFile, givenSettings;
+    bool badArgs = false;
+    for (int i = 1; i < argc; i++) {
+        string arg = argv[i];
+        if (arg == "--settings" && i + 1 < argc) givenSettings = argv[++i];
+        else if (arg[0] != '-' && wavFile.empty()) wavFile = arg;
+        else badArgs = true;
+    }
+    if (badArgs) {
+        std::fprintf(stderr, "Usage: %s [--settings FILE] [file.wav]\n"
+                     "  --settings FILE  use this settings file. By default it's settings.ini,\n"
+                     "                   or settings-2.ini, -3, ... when other copies are running\n"
+                     "  file.wav         decode the packets in this file, then quit\n", argv[0]);
         return EXIT_FAILURE;
     }
+    Settings settings = loadOwnSettings(givenSettings);
 
 #ifndef _WIN32
     // Bigger PulseAudio buffer so direwolf's Tx audio doesn't gap (WSLg, virtual cables)
     setenv("PULSE_LATENCY_MSEC", "100", 0);
 #endif
 
-    if (argc == 2) {
-        decodeWavFile(settings, argv[1]);
+    if (!wavFile.empty()) {
+        decodeWavFile(settings, wavFile);
         ansi::clearScreen();
         return EXIT_SUCCESS;
     }
 
     bool haveDirewolf = direwolfAvailable();
+    // Shown when it isn't the usual settings.ini, so two copies can be told apart
+    string settingsNote;
+    if (settingsFile != settingsPath())
+        settingsNote = "Settings: " + (givenSettings.empty()
+                                           ? fs::path(settingsFile).filename().string()
+                                           : settingsFile);
     int cursor = 0;
     for (;;) {
-        string status;
-        if (!haveDirewolf) status = string("direwolf not found at ") + os::direwolfPath();
+        string status = settingsNote;
+        if (!haveDirewolf)
+            status += (status.empty() ? "" : "   ") + string("direwolf not found at ") +
+                      os::direwolfPath();
         vector<string> items = {
             "Start        " + describe(settings),
             "Settings",

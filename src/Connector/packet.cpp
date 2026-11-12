@@ -87,6 +87,14 @@ std::string normalizeCallsign(const std::string& text) {
     return n == 0 ? base : base + "-" + std::to_string(n);
 }
 
+std::string otherSsid(const std::string& callsign, int steps) {
+    std::string call = normalizeCallsign(callsign);
+    if (call.empty()) return callsign;
+    size_t dash = call.find('-');
+    int ssid = dash == std::string::npos ? 0 : std::atoi(call.c_str() + dash + 1);
+    return call.substr(0, dash) + "-" + std::to_string((ssid + steps - 1) % 15 + 1);
+}
+
 Bytes encodeUi(const std::string& source, const std::string& destination, std::string_view info,
                const std::vector<std::string>& path) {
     Bytes frame;

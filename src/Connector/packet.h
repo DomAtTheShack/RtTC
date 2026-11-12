@@ -22,6 +22,10 @@ size_t maxInfoFor(int fx25);
 
 // "n0call-7" -> "N0CALL-7", "N0CALL-0" -> "N0CALL". Empty if invalid
 std::string normalizeCallsign(const std::string& text);
+// The same callsign steps SSIDs on, skipping 0: steps 1 is the Radio Connector's
+// (N0CALL -> N0CALL-1, N0CALL-15 -> N0CALL-1), steps 2 a second RadioConnectorCli's, and so
+// on. Unchanged if invalid
+std::string otherSsid(const std::string& callsign, int steps = 1);
 
 struct Frame {
     std::string source;

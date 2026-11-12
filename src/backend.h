@@ -128,6 +128,9 @@ std::string findUsbSerialPort(uint16_t vendorId, uint16_t productId);
 
 bool fileExists(const std::string& path);
 bool fileReadable(const std::string& path);
+// Locks path (made if missing) until this process exits, crashed or not. false if another
+// process holds it, or it can't be made
+bool lockForLife(const std::string& path);
 
 // Terminal
 

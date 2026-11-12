@@ -44,6 +44,7 @@
     #include <glob.h>
     #include <poll.h>
     #include <signal.h>
+    #include <sys/file.h>
     #include <sys/ioctl.h>
     #include <sys/wait.h>
     #include <termios.h>
@@ -503,6 +504,14 @@ bool fileReadable(const std::string& path) {
     if (h == INVALID_HANDLE_VALUE) return false;
     CloseHandle(h);
     return true;
+}
+
+bool lockForLife(const std::string& path) {
+    // No sharing: another open fails until Windows closes the handle when the process ends,
+    // which also deletes the file. Not inheritable, so direwolf doesn't keep it
+    HANDLE h = CreateFileW(widen(path).c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    return h != INVALID_HANDLE_VALUE;   // Never closed
 }
 
 bool isTerminal(FILE* stream) {
@@ -1189,6 +1198,17 @@ std::string playTone(const std::string& device, const std::vector<int16_t>& seco
 
 bool fileExists(const std::string& path)   { return access(path.c_str(), F_OK) == 0; }
 bool fileReadable(const std::string& path) { return access(path.c_str(), R_OK) == 0; }
+
+bool lockForLife(const std::string& path) {
+    // Close-on-exec, so direwolf doesn't keep the lock after this process has gone
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (fd < 0) return false;
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        close(fd);
+        return false;
+    }
+    return true;   // Never closed
+}
 
 bool isTerminal(FILE* stream) {
     return isatty(fileno(stream)) != 0;
