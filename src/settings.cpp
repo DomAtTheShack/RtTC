@@ -17,14 +17,6 @@ std::string trim(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
-bool toFloat(const std::string& s, float& out) {
-    char* end = nullptr;
-    float value = std::strtof(s.c_str(), &end);
-    if (end == s.c_str() || *end != '\0' || !(value > 0)) return false;
-    out = value;
-    return true;
-}
-
 bool toInt(const std::string& s, int low, int high, int& out) {
     char* end = nullptr;
     long value = std::strtol(s.c_str(), &end, 10);
@@ -77,9 +69,8 @@ fs::path configDir() {
 
 const char* operationName(Operation operation) {
     switch (operation) {
-        case Operation::Receive:  return "Receive";
-        case Operation::Transmit: return "Transmit";
-        case Operation::Duplex:   return "Duplex";
+        case Operation::Duplex:    return "Duplex";
+        case Operation::Connected: return "Connected";
     }
     return "?";
 }
@@ -153,8 +144,7 @@ std::string pttProblem(const Settings& s) {
 std::string formatSettings(const Settings& s) {
     std::ostringstream out;
     out << "# Radio to Text Connector settings\n";
-    out << "operation=" << (s.operation == Operation::Receive  ? "receive"
-                          : s.operation == Operation::Transmit ? "transmit" : "duplex") << "\n";
+    out << "operation=" << (s.operation == Operation::Connected ? "connected" : "duplex") << "\n";
     out << "packet_baud=" << s.packetBaud << "\n";
     out << "fx25=" << (s.fx25 <= 0 ? std::string("off") : s.fx25 == 1 ? std::string("auto")
                                                                          : std::to_string(s.fx25)) << "\n";
@@ -168,7 +158,6 @@ std::string formatSettings(const Settings& s) {
     out << "rig_model=" << s.rigModel << "\n";
     out << "ptt=" << pttKey(s.ptt) << "\n";
     out << "ptt_port=" << s.pttPort << "\n";
-    out << "audio_file=" << s.audioFile << "\n";
     out << "bluetooth=" << s.bluetooth << "\n";
     out << "bluetooth_name=" << s.bluetoothName << "\n";
     out << "bt_play_audio=" << s.btPlayAudio << "\n";
@@ -176,9 +165,6 @@ std::string formatSettings(const Settings& s) {
     std::string path;
     for (const std::string& hop : s.path) path += (path.empty() ? "" : ",") + hop;
     out << "path=" << path << "\n";
-    out << "retry_tries=" << s.retryTries << "\n";
-    out << "retry_extra_wait=" << s.retryExtraWait << "\n";
-    out << "hold_for_main=" << s.holdForMain << "\n";
     out << "main=" << s.mainAddress << "\n";
     out << "connected=" << (s.connectedEnabled ? "on" : "off") << "\n";
     out << "max_sessions=" << s.maxSessions << "\n";
@@ -186,6 +172,7 @@ std::string formatSettings(const Settings& s) {
     out << "page_bytes=" << s.pageBytes << "\n";
     out << "busy_text=" << s.busyText << "\n";
     out << "send_to=" << s.sendTo << "\n";
+    out << "frequency=" << s.frequency << "\n";
     return out.str();
 }
 
@@ -201,17 +188,18 @@ Settings parseSettings(const std::string& text) {
         std::string key = trim(line.substr(0, eq));
         std::string value = trim(line.substr(eq + 1));
 
+        // receive and transmit were modes once; they load as duplex
         if (key == "operation") {
-            if (value == "receive")  s.operation = Operation::Receive;
-            if (value == "transmit") s.operation = Operation::Transmit;
-            if (value == "duplex")   s.operation = Operation::Duplex;
+            if (value == "receive" || value == "transmit" || value == "duplex") s.operation = Operation::Duplex;
+            if (value == "connected") s.operation = Operation::Connected;
         }
-        // modem, protocol, baud, centre, shift, squelch and quiet were minimodem's. Files
-        // from then still load; those lines are ignored
+        // Keys that are gone still load, and are ignored: minimodem's (modem, protocol,
+        // baud, centre, shift, squelch, quiet), audio_file (now the Test tools' WAV file
+        // tools) and RC1's (retry_tries, retry_extra_wait, hold_for_main)
         else if (key == "packet_baud") {
-            float baud;
-            if (toFloat(value, baud) && (baud == 300 || baud == 1200 || baud == 9600))
-                s.packetBaud = static_cast<int>(baud);
+            int baud = 0;
+            if (toInt(value, 300, 9600, baud) && (baud == 300 || baud == 1200 || baud == 9600))
+                s.packetBaud = baud;
         }
         else if (key == "fx25") {
             if (value == "off")  s.fx25 = 0;
@@ -219,22 +207,15 @@ Settings parseSettings(const std::string& text) {
             if (value == "16" || value == "32" || value == "64") s.fx25 = std::stoi(value);
         }
         else if (key == "callsign")     s.callsign = value;
-        else if (key == "rig_model") {
-            float model;
-            if (toFloat(value, model) && model >= 1 && model < 100000) s.rigModel = static_cast<int>(model);
-        }
+        else if (key == "rig_model")    toInt(value, 1, 99999, s.rigModel);
         else if (key == "rx_audio")     s.rxAudio = value;
         else if (key == "tx_audio")     s.txAudio = value;
         else if (key == "rx_audio_desc") s.rxAudioDesc = value;
         else if (key == "tx_audio_desc") s.txAudioDesc = value;
         else if (key == "cat_port")     s.catPort = value;
-        else if (key == "cat_baud") {
-            float baud;
-            if (toFloat(value, baud)) s.catBaud = static_cast<int>(baud);
-        }
+        else if (key == "cat_baud")     toInt(value, 300, 1000000, s.catBaud);
         else if (key == "ptt")          pttGiven = parsePttKey(value, s.ptt);
         else if (key == "ptt_port")     s.pttPort = value;
-        else if (key == "audio_file")   s.audioFile = value;
         else if (key == "bluetooth")    s.bluetooth = value;
         else if (key == "bluetooth_name") s.bluetoothName = value;
         else if (key == "bt_play_audio")  s.btPlayAudio = value;
@@ -246,9 +227,6 @@ Settings parseSettings(const std::string& text) {
             while (std::getline(hops, hop, ','))
                 if (!trim(hop).empty()) s.path.push_back(trim(hop));
         }
-        else if (key == "retry_tries")      toInt(value, 1, 20, s.retryTries);
-        else if (key == "retry_extra_wait") toInt(value, 0, 600, s.retryExtraWait);
-        else if (key == "hold_for_main")    toInt(value, 0, 86400, s.holdForMain);
         else if (key == "main")             s.mainAddress = value;
         else if (key == "connected")        s.connectedEnabled = value == "on";
         else if (key == "max_sessions")     toInt(value, 1, 16, s.maxSessions);
@@ -259,6 +237,11 @@ Settings parseSettings(const std::string& text) {
         }
         else if (key == "busy_text" && !value.empty() && value.size() <= 200) s.busyText = value;
         else if (key == "send_to")          s.sendTo = value;
+        else if (key == "frequency") {
+            char* end = nullptr;
+            long long hz = std::strtoll(value.c_str(), &end, 10);
+            if (end != value.c_str() && *end == '\0' && hz >= 0 && hz <= 10'000'000'000LL) s.frequency = hz;
+        }
     }
     // Files from before ptt= keyed over CAT whenever a CAT port was set
     if (!pttGiven && s.hasCat()) s.ptt = PttType::Cat;

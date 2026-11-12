@@ -31,7 +31,6 @@ std::string missingConfig(const Settings& settings);
 // "127.0.0.1:9000" -> host and port. "localhost" becomes 127.0.0.1. false if invalid
 bool parseHostPort(const std::string& text, std::string& host, int& port);
 
-Options engineOptions(const Settings& settings);
 SessionOptions sessionOptions(const Settings& settings);
 // direwolf's PACLEN for connected mode: the largest I frame that fits one FX.25 block
 int direwolfPaclen(const Settings& settings);

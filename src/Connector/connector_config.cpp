@@ -1,8 +1,10 @@
 #include "connector_config.h"
 
 #include <cctype>
+#include <optional>
 
 #include "packet.h"
+#include "../Bluetooth/bt_protocol.h"
 
 namespace connector {
 
@@ -37,23 +39,6 @@ Json pttToJson(const Settings& s) {
 // address "" = off. The cables are Windows only (see Settings::btPlayAudio)
 Json bluetoothToJson(const Settings& s) {
     return {{"address", s.bluetooth}, {"playAudio", s.btPlayAudio}, {"recordAudio", s.btRecordAudio}};
-}
-
-// "AA:BB:CC:DD:EE:FF" (any case, ':' or '-') -> upper case with ':'. "" if it isn't one
-std::string bluetoothAddress(const std::string& text) {
-    if (text.size() != 17) return "";
-    std::string out;
-    for (size_t i = 0; i < text.size(); i++) {
-        char c = text[i];
-        if (i % 3 == 2) {
-            if (c != ':' && c != '-') return "";
-            out += ':';
-        } else {
-            if (!std::isxdigit(static_cast<unsigned char>(c))) return "";
-            out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        }
-    }
-    return out;
 }
 
 bool validIpv4(const std::string& host) {
@@ -94,8 +79,6 @@ Json configToJson(const Settings& s) {
         {"bluetooth", bluetoothToJson(s)},
         {"radio", radioToJson(s)},
         {"ptt", pttToJson(s)},
-        {"retry", {{"tries", s.retryTries}, {"extraWaitSeconds", s.retryExtraWait}}},
-        {"holdForMainSeconds", s.holdForMain},
         {"main", s.mainAddress},
         {"connected", {{"enabled", s.connectedEnabled},
                        {"maxSessions", s.maxSessions},
@@ -134,7 +117,8 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
                 s.fx25 = value.is_string() ? std::stoi(value.get<std::string>()) : value.get<int>();
             else return fail(key, "must be off, auto, 16, 32 or 64");
         } else if (key == "path") {
-            if (!value.is_array() || value.size() > 8) return fail(key, "must be a list of up to 8 digipeaters");
+            // AGW connects through at most 7
+            if (!value.is_array() || value.size() > 7) return fail(key, "must be a list of up to 7 digipeaters");
             std::vector<std::string> path;
             for (const Json& hop : value) {
                 std::string call = hop.is_string() ? packet::normalizeCallsign(hop.get<std::string>()) : "";
@@ -154,7 +138,7 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
                 if (field == "address") {
                     if (!fieldValue.is_string()) return fail("bluetooth.address", "must be an address or \"\"");
                     std::string text = fieldValue.get<std::string>();
-                    std::string address = bluetoothAddress(text);
+                    std::string address = bt::normalizeAddress(text);
                     if (!text.empty() && address.empty())
                         return fail("bluetooth.address", "must be like 38:D2:00:01:C0:AB, or \"\" for off");
                     if (address != s.bluetooth) s.bluetoothName.clear();
@@ -239,25 +223,6 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
                 s.pttPort = value["port"].get<std::string>();
             }
             if (!line && s.ptt != PttType::Aioc) s.pttPort.clear();
-        } else if (key == "retry") {
-            if (!value.is_object()) return fail(key, "must be an object");
-            for (const auto& [field, fieldValue] : value.items()) {
-                if (field == "tries") {
-                    auto tries = intIn(fieldValue, 1, 20);
-                    if (!tries) return fail("retry.tries", "must be 1 to 20");
-                    s.retryTries = *tries;
-                } else if (field == "extraWaitSeconds") {
-                    auto wait = intIn(fieldValue, 0, 600);
-                    if (!wait) return fail("retry.extraWaitSeconds", "must be 0 to 600");
-                    s.retryExtraWait = *wait;
-                } else {
-                    return fail("retry." + field, "unknown setting");
-                }
-            }
-        } else if (key == "holdForMainSeconds") {
-            auto hold = intIn(value, 0, 86400);
-            if (!hold) return fail(key, "must be 0 to 86400");
-            s.holdForMain = *hold;
         } else if (key == "main") {
             std::string host;
             int port = 0;
@@ -357,18 +322,6 @@ SessionOptions sessionOptions(const Settings& s) {
 
 int direwolfPaclen(const Settings& s) {
     return static_cast<int>(packet::maxInfoFor(s.fx25));
-}
-
-Options engineOptions(const Settings& s) {
-    Options o;
-    o.callsign = packet::normalizeCallsign(s.callsign);
-    o.path = s.path;
-    o.fx25 = s.fx25;
-    o.baud = s.packetBaud;
-    o.tries = s.retryTries;
-    o.extraWaitSeconds = s.retryExtraWait;
-    o.holdForMainSeconds = s.holdForMain;
-    return o;
 }
 
 } // namespace connector

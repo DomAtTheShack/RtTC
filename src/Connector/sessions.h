@@ -1,6 +1,6 @@
 // Connected-mode sessions (docs/connected-mode.md): AX.25 connections through direwolf's
-// AGW port, with paging and turn-taking between users. No I/O here, like Engine: the
-// program passes in AGW frames, requests from the main program and the time, and gets
+// AGW port, with paging and turn-taking between users. No I/O here, so it can be tested:
+// the program passes in AGW frames, requests from the main program and the time, and gets
 // AGW frames and JSON back through the hooks.
 #ifndef RTC_SESSIONS_H
 #define RTC_SESSIONS_H

@@ -159,9 +159,9 @@ std::string direwolfConfig(const Settings& s, const std::string& rxDevice,
     }
     config += "AGWPORT " + std::to_string(agwPort > 0 ? agwPort : 0) + "\n";
     if (agwPort > 0 && paclen > 0) config += "PACLEN " + std::to_string(paclen) + "\n";
-    config +=
-        "KISSPORT 0\n"
-        "KISSPORT " + std::to_string(kissPort) + "\n";
+    // The first line turns off the default port (8001)
+    config += "KISSPORT 0\n";
+    if (kissPort > 0) config += "KISSPORT " + std::to_string(kissPort) + "\n";
     return config;
 }
 
@@ -187,11 +187,12 @@ std::vector<std::string> genPacketsArgs(const Settings& s, const std::string& wa
     return args;
 }
 
+std::string describeModem(const Settings& s) {
+    return std::to_string(s.packetBaud) + " baud AX.25 (" + packetModemName(s.packetBaud) + ")" +
+           (s.fx25 > 0 ? " FX.25" : "");
+}
+
 std::string describe(const Settings& s) {
-    std::string text = std::string(operationName(s.operation)) + " | " + std::to_string(s.packetBaud) +
-                       " baud AX.25 (" + packetModemName(s.packetBaud) + ")" +
-                       (s.transmits() && s.fx25 > 0 ? " FX.25" : "") + " | " +
-                       (s.callsign.empty() ? std::string("no callsign") : s.callsign);
-    if (!s.audioFile.empty()) text += " | file " + s.audioFile;
-    return text;
+    return std::string(operationName(s.operation)) + " | " + describeModem(s) + " | " +
+           (s.callsign.empty() ? std::string("no callsign") : s.callsign);
 }

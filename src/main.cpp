@@ -19,6 +19,7 @@
 #include "Radio/fsk.h"
 #include "Radio/modem.h"
 #include "options.h"
+#include "Connector/connector_config.h"
 #include "Connector/packet.h"
 #include "session.h"
 #include "settings.h"
@@ -346,9 +347,64 @@ void printSessionHeader(const Settings& settings, bool onAir) {
         if (settings.ptt == PttType::Cat)
             ansi::print(infoColor, "Radio: %s\n", radioControlDescription(settings).c_str());
     }
-    if (settings.transmits() && !settings.sendTo.empty())
+    if (settings.operation == Operation::Connected) {
+        if (settings.sendTo.empty()) ansi::print(infoColor, "Waiting for calls\n");
+        else ansi::print(infoColor, "Connecting to %s\n", settings.sendTo.c_str());
+    } else if (!settings.sendTo.empty()) {
         ansi::print(infoColor, "Sending to %s\n", settings.sendTo.c_str());
+    }
     ansi::flush();
+}
+
+// "145.0500"
+string mhzText(long long hz) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.4f", static_cast<double>(hz) / 1e6);
+    return text;
+}
+
+// "145.0500 MHz", or "Leave the radio as it is" for 0
+string frequencyDescription(long long hz) {
+    return hz > 0 ? mhzText(hz) + " MHz" : "Leave the radio as it is";
+}
+
+// The frequency Connected mode tunes to, in MHz. false on Esc
+bool pickFrequency(Settings& settings) {
+    string text = settings.frequency > 0 ? mhzText(settings.frequency) : "";
+    string prompt = "MHz, e.g. 145.050. Tuned over CAT at the start. Empty = leave the radio";
+    for (;;) {
+        if (!ansi::inputLine("Frequency", prompt, text)) return false;
+        if (text.empty()) {
+            settings.frequency = 0;
+            return true;
+        }
+        char* end = nullptr;
+        double mhz = std::strtod(text.c_str(), &end);
+        if (end != text.c_str() && *end == '\0' && mhz >= 0.1 && mhz <= 10000) {
+            settings.frequency = std::llround(mhz * 1e6);
+            return true;
+        }
+        prompt = "\"" + text + "\" isn't a frequency in MHz, e.g. 145.050";
+    }
+}
+
+// settings.sendTo: who Duplex addresses typed packets to (empty = CQ), or who Connected
+// mode connects to at the start (empty = wait for calls). false on Esc
+bool pickSendTo(Settings& settings) {
+    bool connected = settings.operation == Operation::Connected;
+    const char* title = connected ? "Connect to" : "Send to";
+    string ifEmpty = connected ? "Empty = wait for calls" : "Empty = CQ (everyone)";
+    string call = settings.sendTo;
+    string prompt = "Callsign, e.g. a Radio Connector's N0CALL-1. " + ifEmpty;
+    for (;;) {
+        if (!ansi::inputLine(title, prompt, call)) return false;
+        string normalized = packet::normalizeCallsign(call);
+        if (call.empty() || !normalized.empty()) {
+            settings.sendTo = normalized;
+            return true;
+        }
+        prompt = "\"" + call + "\" isn't a valid callsign. " + ifEmpty;
+    }
 }
 
 // false on Esc
@@ -369,21 +425,6 @@ bool pickCallsign(Settings& settings) {
 // Who typed packets go to: a station for testing a Radio Connector, else everyone
 string sendToAddress(const Settings& settings) {
     return settings.sendTo.empty() ? packet::groupAddress : settings.sendTo;
-}
-
-// Empty = CQ. false on Esc
-bool pickSendTo(Settings& settings) {
-    string call = settings.sendTo;
-    string prompt = "Callsign, e.g. a Radio Connector's N0CALL-1. Empty = CQ (everyone)";
-    for (;;) {
-        if (!ansi::inputLine("Send to", prompt, call)) return false;
-        string normalized = packet::normalizeCallsign(call);
-        if (call.empty() || !normalized.empty()) {
-            settings.sendTo = normalized;
-            return true;
-        }
-        prompt = "\"" + call + "\" isn't a valid callsign. Empty = CQ (everyone)";
-    }
 }
 
 // Typed lines -> gen_packets input (direwolf monitor format)
@@ -409,36 +450,27 @@ TransmitFormat genPacketsFormat(const string& callsign, const string& destinatio
     return format;
 }
 
-// Writes direwolf's config, runs the session and makes sure the radio is unkeyed
-bool runDirewolf(const Settings& settings, const string& rxName, const string& txName,
-                 PacketSession session) {
-    int kissPort = os::freeTcpPort();
-    if (kissPort == 0) {
-        ansi::print(failColor, "No free TCP port for direwolf.\n");
-        return false;
+// direwolf truncates -c paths at 99 characters, so it runs from the config's folder
+const char* const direwolfConfigName = "radio-to-text-direwolf.conf";
+
+// Writes direwolf's config to the temp folder. Empty (after saying why) if it can't
+fs::path writeDirewolfConfig(const Settings& settings, const string& rxName, const string& txName,
+                             int kissPort, int agwPort = 0, int paclen = 0) {
+    fs::path config = fs::temp_directory_path() / direwolfConfigName;
+    std::ofstream out(config, std::ios::trunc);
+    bool cable = settings.ptt == PttType::Aioc;
+    out << direwolfConfig(settings, direwolfDevice(rxName, false, cable), direwolfDevice(txName, true, cable),
+                          kissPort, agwPort, paclen);
+    if (!out) {
+        ansi::print(failColor, "Could not write %s\n", config.string().c_str());
+        return {};
     }
-    // direwolf truncates -c paths at 99 characters, so run it from the config's folder
-    const char* configName = "radio-to-text-direwolf.conf";
-    fs::path config = fs::temp_directory_path() / configName;
-    {
-        std::ofstream out(config, std::ios::trunc);
-        bool cable = settings.ptt == PttType::Aioc;
-        out << direwolfConfig(settings, direwolfDevice(rxName, false, cable), direwolfDevice(txName, true, cable),
-                              kissPort);
-        if (!out) {
-            ansi::print(failColor, "Could not write %s\n", config.string().c_str());
-            return false;
-        }
-    }
-    session.direwolfArgs = direwolfArgs(configName);
-    session.workingDir = config.parent_path().string();
-    session.kissPort = kissPort;
-    session.callsign = settings.callsign;
-    session.destination = sendToAddress(settings);
-    session.baud = settings.packetBaud;
-    session.fx25 = settings.fx25;
-    bool transmitted = false;
-    bool ok = runPacketSession(session, transmitted);
+    return config;
+}
+
+// After a direwolf session: the radio unkeyed, the config gone, and why it failed if
+// direwolf is missing. Returns ok
+bool afterDirewolf(const Settings& settings, const fs::path& config, bool transmitted, bool ok) {
     if (transmitted && settings.keysRadio()) unkeyAfterDirewolf(settings);
     std::error_code ec;
     fs::remove(config, ec);
@@ -447,93 +479,155 @@ bool runDirewolf(const Settings& settings, const string& rxName, const string& t
     return ok;
 }
 
-void startPacketSession(Settings& settings) {
-    bool useFile = !settings.audioFile.empty();
-    const string& file = settings.audioFile;
-    if (settings.transmits() && settings.callsign.empty()) {
-        if (!pickCallsign(settings)) return;
-        save(settings);
+// Duplex: direwolf with a KISS port, and the packet screen
+bool runDirewolf(const Settings& settings, const string& rxName, const string& txName,
+                 PacketSession session) {
+    int kissPort = os::freeTcpPort();
+    if (kissPort == 0) {
+        ansi::print(failColor, "No free TCP port for direwolf.\n");
+        return false;
     }
+    fs::path config = writeDirewolfConfig(settings, rxName, txName, kissPort);
+    if (config.empty()) return false;
+    session.direwolfArgs = direwolfArgs(direwolfConfigName);
+    session.workingDir = config.parent_path().string();
+    session.kissPort = kissPort;
+    session.callsign = settings.callsign;
+    session.destination = sendToAddress(settings);
+    session.baud = settings.packetBaud;
+    session.fx25 = settings.fx25;
+    bool transmitted = false;
+    bool ok = runPacketSession(session, transmitted);
+    return afterDirewolf(settings, config, transmitted, ok);
+}
 
-    if (useFile && settings.operation == Operation::Receive) {
-        printSessionHeader(settings, false);
-        ansi::print(dimColor, "Decoding %s...\n\n", file.c_str());
-        ansi::flush();
-        string error;
-        string packets = decodePacketsFile(settings, file, error);
-        if (!error.empty()) {
-            ansi::print(failColor, "%s\n", error.c_str());
-            if (!atestAvailable())
-                ansi::print(warnColor, "atest not found at %s\n", os::atestPath());
-        } else if (packets.empty()) {
-            ansi::print(warnColor, "No packets found.\n");
-        } else {
-            ansi::print(infoColor, "%s", packets.c_str());
-        }
-        ansi::waitKey();
-        return;
+// Connected mode: direwolf with an AGW port, and the chat screen
+bool runConnectedDirewolf(const Settings& settings, const string& rxName, const string& txName) {
+    int agwPort = os::freeTcpPort();
+    if (agwPort == 0) {
+        ansi::print(failColor, "No free TCP port for direwolf.\n");
+        return false;
     }
-    if (useFile) {   // Transmit: write packets to the file
-        printSessionHeader(settings, false);
-        bool ok = runFileTransmit(genPacketsArgs(settings, file),
-                                  genPacketsFormat(settings.callsign, sendToAddress(settings), settings.fx25));
-        if (!ok) ansi::print(failColor, "\nStopped with an error.\n");
-        ansi::waitKey();
-        return;
-    }
+    fs::path config = writeDirewolfConfig(settings, rxName, txName, 0, agwPort,
+                                          connector::direwolfPaclen(settings));
+    if (config.empty()) return false;
+    ConnectedSession session;
+    session.direwolfArgs = direwolfArgs(direwolfConfigName);
+    session.workingDir = config.parent_path().string();
+    session.agwPort = agwPort;
+    session.callsign = settings.callsign;
+    session.connectTo = settings.sendTo;
+    session.fx25 = settings.fx25;
+    session.maxSessions = settings.maxSessions;
+    bool transmitted = false;
+    bool ok = runConnectedSession(session, transmitted);
+    return afterDirewolf(settings, config, transmitted, ok);
+}
 
-    if (!findAiocCable(settings)) return;
+// Tunes the radio to settings.frequency over CAT. false (after saying why) if it can't
+bool tuneRadio(const Settings& settings) {
+    if (settings.frequency <= 0) return true;
+    string frequency = frequencyDescription(settings.frequency);
+    if (!settings.hasCat()) {
+        showMessage("Can't tune the radio", "Frequency is " + frequency + ", but there's no CAT port. "
+                    "Set Settings > Radio (CAT), or clear Frequency and tune the radio yourself.");
+        return false;
+    }
+    ansi::clearScreen();
+    ansi::print(dimColor, "Tuning to %s...\n", frequency.c_str());
+    ansi::flush();
+    try {
+        Cat radio(settings.rigModel, settings.catPort, settings.catBaud);
+        radio.setFrequency(static_cast<double>(settings.frequency));
+        return true;
+    } catch (const std::exception& e) {
+        showMessage("Can't tune the radio", string(e.what()) + "\n\nRadio (CAT): " +
+                    radioControlDescription(settings) + "\n\nCheck Settings > Radio (CAT) and Frequency.");
+        return false;
+    }
+}
+
+// false (after saying why) if direwolf can't reach a Bluetooth radio here
+bool bluetoothPacketWorks(const Settings& settings) {
 #ifdef __APPLE__
     if (settings.usesBluetooth()) {
         // Homebrew's direwolf uses the Mac's default sound card, which the bridge can't be
         showMessage("Bluetooth packet needs Linux or Windows",
                     "On macOS direwolf always uses the system's default sound card, so it can't "
                     "reach the Bluetooth radio.");
+        return false;
+    }
+#else
+    (void)settings;
+#endif
+    return true;
+}
+
+// The sound cards for direwolf: the Bluetooth bridge's, or the saved ones (asking for any
+// that are missing). false (after saying why) on Esc or a problem
+bool radioAudio(Settings& settings, BluetoothSession& bluetooth, string& rxName, string& txName) {
+    if (!findAiocCable(settings)) return false;
+    if (!bluetoothPacketWorks(settings)) return false;
+    if (settings.usesBluetooth() && !bluetooth.start(settings)) return false;
+    rxName = bluetooth.capture();
+    txName = bluetooth.playback();
+    for (bool playback : {false, true}) {
+        string& name = playback ? txName : rxName;
+        if (!name.empty()) continue;
+        auto saved = resolveAudioName(settings, playback);
+        if (!saved) return false;
+        name = *saved;
+    }
+    return true;
+}
+
+// false on Esc
+bool haveCallsign(Settings& settings) {
+    if (!settings.callsign.empty()) return true;
+    if (!pickCallsign(settings)) return false;
+    save(settings);
+    return true;
+}
+
+void startConnectedSession(Settings& settings) {
+    if (!haveCallsign(settings) || !pickSendTo(settings)) return;
+    if (!settings.sendTo.empty() && settings.sendTo == packet::normalizeCallsign(settings.callsign)) {
+        showMessage("Can't connect", settings.sendTo + " is this station's own callsign.");
         return;
     }
-#endif
+    save(settings);
+    if (!tuneRadio(settings)) return;
     BluetoothSession bluetooth;
-    if (settings.usesBluetooth() && !bluetooth.start(settings)) return;
+    string rxName, txName;
+    if (!radioAudio(settings, bluetooth, rxName, txName)) return;
 
-    // direwolf always needs the capture card: it listens for a clear channel before sending
-    std::optional<string> rxName = bluetooth.capture();
-    if (rxName->empty()) rxName = resolveAudioName(settings, false);
-    if (!rxName) return;
-    string txName = settings.txAudio;
-    if (!bluetooth.playback().empty()) {
-        txName = bluetooth.playback();
-    } else if (settings.transmits()) {
-        auto name = resolveAudioName(settings, true);
-        if (!name) return;
-        txName = *name;
-    }
+    printSessionHeader(settings, true);
+    if (settings.frequency > 0)
+        ansi::print(infoColor, "Frequency: %s\n", frequencyDescription(settings.frequency).c_str());
+    if (!runConnectedDirewolf(settings, rxName, txName))
+        ansi::print(failColor, "\nStopped with an error.\n");
+    ansi::waitKey();
+}
 
-    printSessionHeader(settings, settings.transmits());
+// Duplex: UI packets sent and heard, chat style
+void startPacketSession(Settings& settings) {
+    if (!haveCallsign(settings)) return;
+    BluetoothSession bluetooth;
+    string rxName, txName;
+    if (!radioAudio(settings, bluetooth, rxName, txName)) return;
+
+    printSessionHeader(settings, true);
     PacketSession session;
-    session.showReceived = settings.receives();
-    session.canType = settings.transmits();
-    if (!runDirewolf(settings, *rxName, txName, session))
+    session.showReceived = true;
+    session.canType = true;
+    if (!runDirewolf(settings, rxName, txName, session))
         ansi::print(failColor, "\nStopped with an error.\n");
     ansi::waitKey();
 }
 
 void startSession(Settings& settings) {
-    bool useFile = !settings.audioFile.empty();
-    const string& file = settings.audioFile;
-    if (useFile && settings.operation == Operation::Duplex) {
-        showMessage("Can't start", "Duplex needs a sound card. Clear the audio file in Settings.");
-        return;
-    }
-    if (useFile && settings.operation == Operation::Receive && !os::fileReadable(file)) {
-        showMessage("Can't start", "Can't read " + file);
-        return;
-    }
-    if (useFile && settings.operation == Operation::Transmit && os::fileExists(file)) {
-        if (ansi::select(file + " already exists", {"Overwrite it", "Cancel"}) != 0) return;
-        std::error_code ec;
-        fs::remove(file, ec);
-    }
-    startPacketSession(settings);
+    if (settings.operation == Operation::Connected) startConnectedSession(settings);
+    else startPacketSession(settings);
 }
 
 // Settings menu
@@ -745,7 +839,8 @@ void settingsMenu(Settings& settings) {
         Settings& s = settings;
         vector<Item> items;
         items.push_back({"Mode", operationName(s.operation), [&] {
-            int choice = ansi::select("Mode", {"Receive", "Transmit", "Duplex"},
+            int choice = ansi::select("Mode", {"Duplex       UI packets, chat style",
+                                               "Connected    AX.25 connected-mode"},
                                       static_cast<int>(s.operation));
             if (choice >= 0) s.operation = static_cast<Operation>(choice);
         }});
@@ -753,12 +848,16 @@ void settingsMenu(Settings& settings) {
                          packetModemName(s.packetBaud) + ")", [&] { pickPacketBaud(s); }});
         items.push_back({"Callsign", s.callsign.empty() ? "(not set)" : s.callsign,
                          [&] { pickCallsign(s); }});
-        // Only sending needs the setting: direwolf decodes FX.25 whenever it hears it
-        if (s.transmits()) {
+        if (s.operation == Operation::Connected) {
+            items.push_back({"Connect to", s.sendTo.empty() ? "(wait for calls)" : s.sendTo,
+                             [&] { pickSendTo(s); }});
+            items.push_back({"Frequency", frequencyDescription(s.frequency), [&] { pickFrequency(s); }});
+        } else {
             items.push_back({"Send to", s.sendTo.empty() ? "CQ (everyone)" : s.sendTo,
                              [&] { pickSendTo(s); }});
-            items.push_back({"FX.25", fx25Name(s.fx25), [&] { pickFx25(s); }});
         }
+        // For sending: direwolf decodes FX.25 whenever it hears it
+        items.push_back({"FX.25", fx25Name(s.fx25), [&] { pickFx25(s); }});
         if (bluetoothBuiltIn() || !s.bluetooth.empty())
             items.push_back({"Bluetooth radio", bluetoothDescription(s), [&] { pickBluetooth(s); }});
         // Bluetooth on Linux and macOS brings its own sound card. On Windows the modems use
@@ -770,26 +869,20 @@ void settingsMenu(Settings& settings) {
             items.push_back({"Transmit audio from", s.btRecordAudio.empty() ? "(not set)" : s.btRecordAudio,
                              [&] { pickBluetoothCable(s, false); }});
         }
-        // direwolf always listens, even when only transmitting
         if (!bluetoothCard) {
             items.push_back({"Rx sound card", audioValue(s.rxAudio, s.rxAudioDesc), [&] {
                 auto devices = findAudioDevices(os::AudioDirection::Capture);
                 pickAudioDevice(s, os::AudioDirection::Capture, devices);
             }});
-        }
-        if (s.transmits() && !bluetoothCard) {
             items.push_back({"Tx sound card", audioValue(s.txAudio, s.txAudioDesc), [&] {
                 auto devices = findAudioDevices(os::AudioDirection::Playback);
                 pickAudioDevice(s, os::AudioDirection::Playback, devices);
             }});
         }
-        if (s.transmits() && s.bluetooth.empty()) {
+        if (s.bluetooth.empty()) {
             items.push_back({"PTT", pttDescription(s), [&] { pickPtt(s); }});
             items.push_back({"Radio (CAT)", radioControlDescription(s), [&] { pickRadioControl(s); }});
         }
-        items.push_back({"Audio file", s.audioFile.empty() ? "(none)" : s.audioFile, [&] {
-            ansi::inputLine("Audio file", "WAV file. Empty = sound card", s.audioFile);
-        }});
         items.push_back({"Reset to defaults", "", [&] {
             if (ansi::select("Reset all settings?", {"Reset", "Cancel"}, 1) == 0)
                 s = Settings{};
@@ -815,7 +908,7 @@ void loopbackTest(const Settings& current) {
     Settings settings = current;
     ansi::clearScreen();
     ansi::print(titleColor, ansi::Bold, "Loopback self-test\n\n");
-    string text = testMessage(settings);
+    string text = testMessage;
     fs::path path = fs::temp_directory_path() / "radio-to-text-selftest.wav";
     if (settings.callsign.empty()) settings.callsign = testCallsign;
     fsk::Audio audio = fsk::ax25(packetFrames(text, settings.callsign), settings.packetBaud, 48000);
@@ -878,29 +971,19 @@ void runStandardTests() {
 
 // One packet with the test message, then stops
 void packetTestMessage(Settings& settings) {
-    if (!findAiocCable(settings)) return;
-    Settings onAir = settings;
-    onAir.operation = Operation::Transmit;
-    onAir.audioFile.clear();
-    if (onAir.callsign.empty()) {
-        if (!pickCallsign(settings)) return;
-        save(settings);
-        onAir.callsign = settings.callsign;
-    }
+    if (!haveCallsign(settings)) return;
     BluetoothSession bluetooth;
-    if (onAir.usesBluetooth() && !bluetooth.start(onAir)) return;
-    std::optional<string> rxName = bluetooth.capture(), txName = bluetooth.playback();
-    if (rxName->empty()) rxName = resolveAudioName(settings, false);
-    if (!rxName) return;
-    if (txName->empty()) txName = resolveAudioName(settings, true);
-    if (!txName) return;
+    string rxName, txName;
+    if (!radioAudio(settings, bluetooth, rxName, txName)) return;
+    Settings onAir = settings;
+    onAir.operation = Operation::Duplex;   // A UI packet, whatever the mode
     printSessionHeader(onAir, true);
     PacketSession session;
     session.showReceived = false;
     session.canType = true;
-    session.text = testMessage(onAir);
+    session.text = testMessage;
     session.finishAfterText = true;
-    if (!runDirewolf(onAir, *rxName, *txName, session))
+    if (!runDirewolf(onAir, rxName, txName, session))
         ansi::print(failColor, "\nStopped with an error.\n");
     ansi::waitKey();
 }
@@ -934,9 +1017,7 @@ void tuningTone(Settings& settings) {
     std::unique_ptr<Cat> radio;   // Keys PTT; empty for VOX and Bluetooth
     if (!openRadio(settings, radio)) return;
 
-    Settings onAir = settings;
-    onAir.operation = Operation::Transmit;
-    printSessionHeader(onAir, true);
+    printSessionHeader(settings, true);
     ansi::print(infoColor, "Tone: %d Hz  (any key stops)\n", hz);
     ansi::flush();
 
@@ -981,7 +1062,7 @@ void tuningTone(Settings& settings) {
 
 void checkCat(const Settings& settings) {
     if (settings.catPort.empty()) {
-        showMessage("No CAT port", "Set one in Settings > Radio (CAT) (Mode must be Transmit or Duplex).");
+        showMessage("No CAT port", "Set one in Settings > Radio (CAT).");
         return;
     }
     ansi::clearScreen();
@@ -1002,6 +1083,62 @@ void checkCat(const Settings& settings) {
     ansi::waitKey();
 }
 
+// The last WAV file a tool used, offered next time
+string lastWavFile;
+
+// Asks for a WAV file's path. false on Esc or an empty answer
+bool pickWavFile(const string& title, const string& prompt, string& file) {
+    file = lastWavFile;
+    if (!ansi::inputLine(title, prompt, file) || file.empty()) return false;
+    lastWavFile = file;
+    return true;
+}
+
+// Decodes the packets in a WAV file with atest. Asks for the file if it's empty
+void decodeWavFile(const Settings& settings, string file = "") {
+    if (file.empty() && !pickWavFile("Decode a WAV file", "Path to a WAV recording", file)) return;
+    if (!os::fileReadable(file)) {
+        showMessage("Can't decode", "Can't read " + file);
+        return;
+    }
+    ansi::clearScreen();
+    ansi::print(titleColor, ansi::Bold, "Decode a WAV file\n");
+    ansi::print(infoColor, "%s\n", describe(settings).c_str());
+    ansi::print(dimColor, "Decoding %s...\n\n", file.c_str());
+    ansi::flush();
+    string error;
+    string packets = decodePacketsFile(settings, file, error);
+    if (!error.empty()) {
+        ansi::print(failColor, "%s\n", error.c_str());
+        if (!atestAvailable()) ansi::print(warnColor, "atest not found at %s\n", os::atestPath());
+    } else if (packets.empty()) {
+        ansi::print(warnColor, "No packets found.\n");
+    } else {
+        ansi::print(infoColor, "%s", packets.c_str());
+    }
+    ansi::waitKey();
+}
+
+// Typed lines become packets in a WAV file, with gen_packets
+void writeWavFile(Settings& settings) {
+    if (!haveCallsign(settings)) return;
+    string file;
+    if (!pickWavFile("Write packets to a WAV file", "Path for the new WAV file", file)) return;
+    if (os::fileExists(file)) {
+        if (ansi::select(file + " already exists", {"Overwrite it", "Cancel"}) != 0) return;
+        std::error_code ec;
+        fs::remove(file, ec);
+    }
+    Settings toFile = settings;
+    toFile.operation = Operation::Duplex;   // UI packets, whatever the mode
+    printSessionHeader(toFile, false);
+    ansi::print(infoColor, "Writing %s\n", file.c_str());
+    bool ok = runFileTransmit(genPacketsArgs(settings, file),
+                              genPacketsFormat(settings.callsign, sendToAddress(settings), settings.fx25));
+    if (!ok) ansi::print(failColor, "\nStopped with an error.\n");
+    ansi::waitKey();
+}
+
 void testMenu(Settings& settings) {
     int cursor = 0;
     for (;;) {
@@ -1011,10 +1148,12 @@ void testMenu(Settings& settings) {
             "Tuning tone",
             "Test message",
             "CAT check",
+            "Decode a WAV file",
+            "Write packets to a WAV file",
             "Back",
         };
         int choice = ansi::select("Test tools", items, cursor, describe(settings));
-        if (choice < 0 || choice == 5) return;
+        if (choice < 0 || choice == 7) return;
         cursor = choice;
         switch (choice) {
             case 0: loopbackTest(settings);         break;
@@ -1022,6 +1161,8 @@ void testMenu(Settings& settings) {
             case 2: tuningTone(settings);           break;
             case 3: packetTestMessage(settings);    break;
             case 4: checkCat(settings);             break;
+            case 5: decodeWavFile(settings);        break;
+            case 6: writeWavFile(settings);         break;
         }
     }
 }
@@ -1031,21 +1172,22 @@ void testMenu(Settings& settings) {
 int main(int argc, char** argv) {
     Settings settings = loadSettings();
 
-    for (int i = 1; i < argc; i++) {
-        if (argv[i][0] != '-') {
-            settings.audioFile = argv[i];
-        } else {
-            std::fprintf(stderr, "Usage: %s [file.wav]\n"
-                         "  file.wav  decode (Receive) or write (Transmit) this file\n", argv[0]);
-            return EXIT_FAILURE;
-        }
+    if (argc > 2 || (argc == 2 && argv[1][0] == '-')) {
+        std::fprintf(stderr, "Usage: %s [file.wav]\n"
+                     "  file.wav  decode the packets in this file, then quit\n", argv[0]);
+        return EXIT_FAILURE;
     }
-    if (argc > 1) save(settings);
 
 #ifndef _WIN32
     // Bigger PulseAudio buffer so direwolf's Tx audio doesn't gap (WSLg, virtual cables)
     setenv("PULSE_LATENCY_MSEC", "100", 0);
 #endif
+
+    if (argc == 2) {
+        decodeWavFile(settings, argv[1]);
+        ansi::clearScreen();
+        return EXIT_SUCCESS;
+    }
 
     bool haveDirewolf = direwolfAvailable();
     int cursor = 0;
