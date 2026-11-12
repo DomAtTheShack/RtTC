@@ -30,7 +30,7 @@ struct ToneFile {
 };
 
 const std::vector<AudioCase>& standardCases();
-std::string testMessage(const Settings& settings);
+extern const char* const testMessage;
 // One UI frame per line
 std::vector<packet::Bytes> packetFrames(const std::string& text, const std::string& callsign);
 const std::vector<ToneFile>& toneFiles();

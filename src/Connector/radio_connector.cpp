@@ -1,9 +1,9 @@
-// Headless: connects one radio (direwolf, AX.25 and FX.25) to the
-// main program over JSON/TCP. See docs/connector-protocol.md.
+// Headless: connects one radio (direwolf, AX.25 and FX.25) to the main program over
+// JSON/TCP. See docs/connector-protocol.md.
 //
-// One thread runs everything below; the main program's socket, direwolf's output and
-// its KISS and AGW ports each have a reader thread that only puts events on the queue.
-// KISS carries RC1 (UI frames); AGW carries connected-mode sessions (docs/connected-mode.md).
+// One thread runs everything below; the main program's socket, direwolf's output and its
+// AGW port each have a reader thread that only puts events on the queue. AGW carries the
+// connected-mode sessions (docs/connected-mode.md).
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -17,7 +17,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <random>
 #include <string>
 #include <thread>
 
@@ -76,29 +75,15 @@ void logLine(const char* format, ...) {
     std::fflush(stderr);
 }
 
-std::string isoUtc(std::chrono::system_clock::time_point when) {
-    std::time_t t = std::chrono::system_clock::to_time_t(when);
-    std::tm tm{};
-#ifdef _WIN32
-    gmtime_s(&tm, &t);
-#else
-    gmtime_r(&t, &tm);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof buf, "%Y-%m-%dT%H:%M:%SZ", &tm);
-    return buf;
-}
-
 // Events
 
 struct Event {
     enum class Type {
         MainConnected, MainLine, MainTooLong, MainClosed, MainFailed,
-        DirewolfOutput, DirewolfEnded, KissFrame, KissClosed, AgwFrame, AgwClosed,
+        DirewolfOutput, DirewolfEnded, AgwFrame, AgwClosed,
     } type;
     int generation = 0;     // Radio events: which direwolf run they came from
     std::string text;
-    packet::Frame frame;
     agw::Frame agwFrame;
 };
 
@@ -287,21 +272,16 @@ public:
             return fail("this build has no Bluetooth audio (bluetooth= is set)");
 #endif
         }
-        int port = os::freeTcpPort();
-        if (port == 0) return fail("no free TCP port for direwolf's KISS port");
-        kissPort = port;
-        agwPort = 0;
-        for (int attempt = 0; attempt < 10 && (agwPort == 0 || agwPort == kissPort); attempt++)
-            agwPort = os::freeTcpPort();
-        if (agwPort == 0 || agwPort == kissPort) return fail("no free TCP port for direwolf's AGW port");
+        agwPort = os::freeTcpPort();
+        if (agwPort == 0) return fail("no free TCP port for direwolf's AGW port");
         // direwolf truncates -c paths at 99 characters, so it runs from the config's folder
-        configName = "radio-connector-" + std::to_string(port) + ".conf";
+        configName = "radio-connector-" + std::to_string(agwPort) + ".conf";
         configPath = fs::temp_directory_path() / configName;
         {
             std::ofstream out(configPath, std::ios::trunc);
             bool cable = settings.ptt == PttType::Aioc;
             out << direwolfConfig(settings, direwolfDevice(rxDevice, false, cable),
-                                  direwolfDevice(txDevice, true, cable), kissPort,
+                                  direwolfDevice(txDevice, true, cable), 0,
                                   agwPort, connector::direwolfPaclen(settings));
             if (!out) return fail("couldn't write " + configPath.string());
         }
@@ -325,17 +305,12 @@ public:
         startDeadline = Clock::now() + direwolfStartLimit;
         nextConnectTry = Clock::now() + 250ms;
         setState(restarting ? State::Restarting : State::Starting, "");
-        logLine("direwolf starting: %s, %d baud, FX.25 %s, KISS port %d, AGW port %d", settings.callsign.c_str(),
-                settings.packetBaud, fx25Name(settings.fx25).c_str(), kissPort, agwPort);
+        logLine("direwolf starting: %s, %d baud, FX.25 %s, AGW port %d", settings.callsign.c_str(),
+                settings.packetBaud, fx25Name(settings.fx25).c_str(), agwPort);
     }
 
     // Stops direwolf (SIGINT first so it unkeys the radio) and makes sure PTT is off
     void stop() {
-        if (kissReader.joinable()) {
-            kiss.shutdown();
-            kissReader.join();
-        }
-        kiss.close();
         if (agwReader.joinable()) {
             agw.shutdown();
             agwReader.join();
@@ -384,11 +359,8 @@ public:
         if ((state == State::Starting || state == State::Restarting) && now >= nextConnectTry) {
             nextConnectTry = now + 250ms;
             int gen = generation;
-            if (!kissReader.joinable() && kiss.connect("127.0.0.1", kissPort))
-                kissReader = std::thread([this, gen] { readKiss(gen); });
-            if (kissReader.joinable() && !agwReader.joinable() && agw.connect("127.0.0.1", agwPort))
+            if (agw.connect("127.0.0.1", agwPort)) {
                 agwReader = std::thread([this, gen] { readAgw(gen); });
-            if (kissReader.joinable() && agwReader.joinable()) {
                 setState(State::Ready, "");
                 logLine("radio ready");
             } else if (now > startDeadline) {
@@ -421,12 +393,11 @@ public:
         }
     }
 
-    // direwolf exited or closed its KISS or AGW port when it shouldn't have
+    // direwolf exited or closed its AGW port when it shouldn't have
     void onStopped(const Event& event) {
         if (event.generation != generation || state == State::Unconfigured || state == State::Error) return;
         stop();
         fail(event.type == Event::Type::DirewolfEnded ? "direwolf stopped unexpectedly"
-             : event.type == Event::Type::KissClosed  ? "direwolf closed the KISS connection"
                                                       : "direwolf closed the AGW connection");
     }
 
@@ -443,23 +414,6 @@ public:
     }
 
     int currentGeneration() const { return generation; }
-
-    bool transmit(const std::string& destination, const std::string& info) {
-        if (state != State::Ready) {
-            logLine("not sent, radio not ready: %s", packet::printable(info).c_str());
-            return false;
-        }
-        packet::Bytes frame = packet::encodeUi(packet::normalizeCallsign(settings.callsign), destination,
-                                               info, settings.path);
-        if (verbose) logLine("tx %s>%s: %s", settings.callsign.c_str(), destination.c_str(),
-                             packet::printable(info).c_str());
-        if (!kiss.write(packet::kissEncode(frame))) {
-            logLine("couldn't send to direwolf: %s", kiss.error().c_str());
-            return false;
-        }
-        transmitted = true;
-        return true;
-    }
 
     State current() const { return state; }
     bool ready() const { return state == State::Ready; }
@@ -481,22 +435,6 @@ public:
     }
 
 private:
-    void readKiss(int gen) {
-        packet::KissDecoder decoder;
-        char buffer[1024];
-        long n;
-        while ((n = kiss.read(buffer, sizeof buffer)) > 0) {
-            for (const packet::Bytes& bytes : decoder.feed(std::string_view(buffer, static_cast<size_t>(n)))) {
-                if (auto frame = packet::decode(bytes)) {
-                    Event event{Event::Type::KissFrame, gen};
-                    event.frame = std::move(*frame);
-                    events.push(std::move(event));
-                }
-            }
-        }
-        events.push({Event::Type::KissClosed, gen});
-    }
-
     void readAgw(int gen) {
         agw::Decoder decoder;
         char buffer[2048];
@@ -530,15 +468,12 @@ private:
     State state = State::Unconfigured;
     std::string why;
     int generation = 0;
-    int kissPort = 0;
     int agwPort = 0;
     std::string configName;
     fs::path configPath;
     std::unique_ptr<os::Process> process;
     std::thread outputReader;
     bool direwolfRunning = false;
-    os::TcpConnection kiss;
-    std::thread kissReader;
     os::TcpConnection agw;
     std::thread agwReader;
     TimePoint startDeadline{}, nextConnectTry{};
@@ -557,13 +492,9 @@ class Connector {
 public:
     explicit Connector(Settings initial)
         : settings(std::move(initial)), main(events), radio(events),
-          engine({[this](const std::string& to, const std::string& info) { return radio.transmit(to, info); },
-                  [this](const Json& message) { main.send(message); }},
-                 std::random_device{}()),
           sessions({[this](const agw::Frame& frame) { return radio.agwSend(frame); },
                     [this](const Json& message) { main.send(message); },
                     [](const std::string& line) { logLine("%s", line.c_str()); }}) {
-        engine.setOptions(connector::engineOptions(settings));
         sessions.setOptions(connector::sessionOptions(settings), Clock::now());
     }
 
@@ -582,8 +513,6 @@ public:
             TimePoint now = Clock::now();
             if (event) handle(*event, now);
             radio.tick(now);
-            engine.setRadioReady(radio.ready(), now);
-            engine.tick(now);
             sessions.setLinkUp(radio.ready(), now);
             sessions.tick(now);
             Json status = radioStatus();
@@ -604,12 +533,10 @@ private:
             case Event::Type::MainConnected:
                 logLine("connected to the main program");
                 sendHello();
-                engine.setMainConnected(true, now);
                 sessions.setMainConnected(true, now);
                 lastStatus = nullptr;   // Full status next
                 break;
             case Event::Type::MainClosed:
-                engine.setMainConnected(false, now);
                 sessions.setMainConnected(false, now);
                 if (quitOnDisconnect) {
                     logLine("main program disconnected; quitting");
@@ -631,26 +558,21 @@ private:
                 radio.onOutput(event);
                 break;
             case Event::Type::DirewolfEnded:
-            case Event::Type::KissClosed:
             case Event::Type::AgwClosed:
                 radio.onStopped(event);
                 break;
-            case Event::Type::AgwFrame:
+            case Event::Type::AgwFrame: {
                 if (event.generation != radio.currentGeneration()) break;   // From a direwolf since stopped
-                if (verbose && event.agwFrame.kind != 'Y') {
-                    const agw::Frame& f = event.agwFrame;
+                const agw::Frame& f = event.agwFrame;
+                if (verbose && f.kind != 'Y') {
                     logLine("agw in %c %s>%s: %s", f.kind, f.from.c_str(), f.to.c_str(),
                             packet::printable(f.data).c_str());
                 }
-                sessions.onAgw(event.agwFrame, now);
+                // A connect or text means another station was heard
+                if (f.kind == 'C' || f.kind == 'D') lastHeard = std::chrono::system_clock::now();
+                sessions.onAgw(f, now);
                 break;
-            case Event::Type::KissFrame:
-                if (verbose) {
-                    logLine("rx %s>%s: %s", event.frame.source.c_str(), event.frame.destination.c_str(),
-                            packet::printable(event.frame.info).c_str());
-                }
-                engine.onFrame(event.frame, now);
-                break;
+            }
         }
     }
 
@@ -675,16 +597,13 @@ private:
                 return reply(connector::errorEnvelope(id, "radio_not_ready",
                                                       std::string("radio is ") + Radio::name(radio.current()) + why));
             }
-            if (body.contains("session")) sessions.send(body, id, now);
-            else engine.send(body, id, now);
+            sessions.send(body, id, now);
         } else if (type == "session.open") {
             sessions.open(body, id, now);
         } else if (type == "session.close") {
             sessions.close(body, id, now);
         } else if (type == "session.list") {
             sessions.list(id);
-        } else if (type == "ack") {
-            engine.mainAck(request.contains("re") ? request["re"] : Json(nullptr), now);
         } else if (type == "config.get") {
             reply(connector::envelope("config", {{"config", connector::configToJson(settings)},
                                                  {"restartRequired", false}}, nullptr, id));
@@ -696,13 +615,12 @@ private:
             if (!change.ok) return reply(connector::errorEnvelope(id, "bad_field", change.message, change.field));
             settings = changed;
             if (!saveSettingsTo(settings, settingsFile)) logLine("WARNING: couldn't save %s", settingsFile.c_str());
-            engine.setOptions(connector::engineOptions(settings));
             sessions.setOptions(connector::sessionOptions(settings), now);
             reply(connector::envelope("config", {{"config", connector::configToJson(settings)},
                                                  {"restartRequired", change.restartRequired}}, nullptr, id));
             if (change.restartRequired) {
                 logLine("config changed; restarting direwolf");
-                radio.start(settings, true);   // Messages in flight are kept
+                radio.start(settings, true);   // Open sessions close (radio_down)
             }
             if (change.mainChanged) {
                 std::string host;
@@ -749,16 +667,12 @@ private:
     }
 
     Json radioStatus() const {
-        auto heard = engine.lastHeard();
         return {
             {"state", Radio::name(radio.current())},
             {"direwolf", radio.direwolfState()},
             {"ptt", pttKey(settings.ptt)},
-            {"txQueue", engine.txQueue()},
-            {"inFlight", engine.inFlight()},
-            {"heldForMain", engine.heldForMain()},
             {"sessions", sessions.count()},
-            {"lastHeard", heard ? Json(isoUtc(*heard)) : Json(nullptr)},
+            {"lastHeard", lastHeard ? Json(connector::isoUtc(*lastHeard)) : Json(nullptr)},
             {"error", radio.problem().empty() ? Json(nullptr) : Json(radio.problem())},
         };
     }
@@ -767,9 +681,9 @@ private:
     EventQueue events;
     MainLink main;
     Radio radio;
-    connector::Engine engine;
     connector::Sessions sessions;
     Json lastStatus;
+    std::optional<std::chrono::system_clock::time_point> lastHeard;
 };
 
 void usage(const char* program) {
@@ -777,7 +691,7 @@ void usage(const char* program) {
                  "Usage: %s [--settings file] [--main host:port] [--verbose] [--direwolf]\n"
                  "  --settings file   settings to use instead of %s\n"
                  "  --main host:port  where the main program listens (saved for next time)\n"
-                 "  --verbose         log every frame sent and heard, and every JSON line\n"
+                 "  --verbose         log every session frame and every JSON line\n"
                  "  --direwolf        also show direwolf's own output\n"
                  "  --quit-on-disconnect  exit when the main program hangs up (for test programs)\n",
                  program, connectorSettingsPath().c_str());

@@ -13,9 +13,11 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// The test audio is plain AX.25 (fsk::ax25 makes no FX.25)
 Settings ax25(int baud) {
     Settings s;
     s.packetBaud = baud;
+    s.fx25 = 0;
     s.callsign = testCallsign;
     return s;
 }
@@ -39,9 +41,7 @@ std::string oneLine(const std::string& text) {
 
 } // namespace
 
-std::string testMessage(const Settings&) {
-    return "Hello from Radio to Text Connector! The quick brown fox 0123456789";
-}
+const char* const testMessage = "Hello from Radio to Text Connector! The quick brown fox 0123456789";
 
 std::vector<packet::Bytes> packetFrames(const std::string& text, const std::string& callsign) {
     std::vector<packet::Bytes> frames;
@@ -146,8 +146,10 @@ std::string runForOutput(const std::vector<std::string>& args, int& status, std:
     return output;
 }
 
-CaseResult decodePacketFile(const Settings& settings, const std::string& path,
-                            const std::string& expected, float minAccuracy) {
+} // namespace
+
+CaseResult decodeFile(const Settings& settings, const std::string& path,
+                      const std::string& expected, float minAccuracy) {
     CaseResult result;
     if (!os::fileReadable(path)) {
         result.error = path + ": not found";
@@ -176,21 +178,14 @@ CaseResult decodePacketFile(const Settings& settings, const std::string& path,
     return result;
 }
 
-} // namespace
-
 std::string decodePacketsFile(const Settings& settings, const std::string& path, std::string& error) {
     Settings anySender = settings;
     anySender.callsign.clear();          // Any sender
-    CaseResult result = decodePacketFile(anySender, path, "", 0);
+    CaseResult result = decodeFile(anySender, path, "", 0);
     error = result.error;
     std::string text;
     for (const std::string& line : result.packets) text += line + "\n";
     return text;
-}
-
-CaseResult decodeFile(const Settings& settings, const std::string& path,
-                      const std::string& expected, float minAccuracy) {
-    return decodePacketFile(settings, path, expected, minAccuracy);
 }
 
 CaseResult runCase(const AudioCase& c, const std::string& dir) {
@@ -240,7 +235,7 @@ bool writeTestAudio(const std::string& dir, std::string& error) {
               "| File | What it is | Settings | Must match | Text sent |\n"
               "|---|---|---|---|---|\n";
     for (const AudioCase& c : standardCases()) {
-        readme << "| `" << c.file << "` | " << c.description << " | " << describe(c.settings)
+        readme << "| `" << c.file << "` | " << c.description << " | " << describeModem(c.settings)
                << ", " << c.rate << " Hz | " << percent(c.minAccuracy) << " | "
                << (c.text.empty() ? "*(nothing)*" : "`" + oneLine(c.text) + "`") << " |\n";
     }

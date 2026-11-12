@@ -15,7 +15,7 @@ void setConf(RIG* rig, const char* name, const std::string& value) {
     check(rig_set_conf(rig, rig_token_lookup(rig, name), value.c_str()), name);
 }
 
-}
+} // namespace
 
 const std::vector<RadioModel>& commonRadios() {
     static const std::vector<RadioModel> radios = {
@@ -154,10 +154,4 @@ bool Cat::transmitting() {
 
 void Cat::setPtt(bool on) {
     check(rig_set_ptt(rig_, RIG_VFO_CURR, on ? RIG_PTT_ON : RIG_PTT_OFF), "set PTT");
-}
-
-int Cat::sMeter() {
-    value_t value;
-    check(rig_get_level(rig_, RIG_VFO_CURR, RIG_LEVEL_STRENGTH, &value), "get S-meter");
-    return value.i;
 }

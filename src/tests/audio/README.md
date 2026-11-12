@@ -5,11 +5,11 @@ Packet files are from N0CALL-1 to CQ.
 
 | File | What it is | Settings | Must match | Text sent |
 |---|---|---|---|---|
-| `packet_1200.wav` | direwolf: 1200 baud AX.25 (VHF/FM), three packets | Receive | 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_1200_noisy.wav` | direwolf: 1200 baud AX.25 with noise (10 dB SNR over the whole band) | Receive | 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_300.wav` | direwolf: 300 baud AX.25 (HF), three packets | Receive | 300 baud AX.25 (AFSK, HF) | N0CALL-1, 11025 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_9600.wav` | direwolf: 9600 baud G3RUH AX.25, three packets | Receive | 9600 baud AX.25 (G3RUH) | N0CALL-1, 48000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
-| `packet_noise_only.wav` | direwolf: noise only, no packets may come out | Receive | 1200 baud AX.25 (AFSK, VHF/FM) | N0CALL-1, 24000 Hz | 100% | *(nothing)* |
+| `packet_1200.wav` | direwolf: 1200 baud AX.25 (VHF/FM), three packets | 1200 baud AX.25 (AFSK, VHF/FM), 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_1200_noisy.wav` | direwolf: 1200 baud AX.25 with noise (10 dB SNR over the whole band) | 1200 baud AX.25 (AFSK, VHF/FM), 24000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_300.wav` | direwolf: 300 baud AX.25 (HF), three packets | 300 baud AX.25 (AFSK, HF), 11025 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_9600.wav` | direwolf: 9600 baud G3RUH AX.25, three packets | 9600 baud AX.25 (G3RUH), 48000 Hz | 100% | `Hello from Radio to Text Connector / The quick brown fox jumps over the lazy dog 0123456789 / {"type":"text","msg":"73 <de> N0CALL"}` |
+| `packet_noise_only.wav` | direwolf: noise only, no packets may come out | 1200 baud AX.25 (AFSK, VHF/FM), 24000 Hz | 100% | *(nothing)* |
 
 ## Tones
 

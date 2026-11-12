@@ -40,8 +40,6 @@ public:
     bool transmitting();
     void setPtt(bool on);
 
-    int sMeter();                       // dB relative to S9 (S9 = 0, S0 = -54)
-
 private:
     RIG* rig_;
 };

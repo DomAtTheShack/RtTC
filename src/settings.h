@@ -5,7 +5,10 @@
 #include <string>
 #include <vector>
 
-enum class Operation { Receive, Transmit, Duplex };
+// RadioConnectorCli's Start. Duplex: UI packets sent and heard, chat style. Connected: AX.25
+// connected-mode chat (docs/connected-mode.md), as a packet station that connects to a
+// Radio Connector or another RadioConnectorCli
+enum class Operation { Duplex, Connected };
 // How the transmitter is keyed: VOX, a CAT command, the RTS/DTR line of a serial port
 // (which can be a second serial port, on radios whose USB connection has two), or an AIOC
 // cable (src/Radio/aioc.h: DTR on and RTS off on its serial port, which is found each run
@@ -18,7 +21,7 @@ constexpr int defaultRigModel = 3087;
 constexpr int ownRigctldModel = 2;
 
 struct Settings {
-    Operation operation = Operation::Receive;
+    Operation operation = Operation::Duplex;
     int packetBaud = 1200;     // 300, 1200 or 9600
     int fx25 = 1;              // FX.25 transmit: 0 off, 1 auto, 16/32/64 check bytes.
                                // Receiving always decodes FX.25
@@ -34,7 +37,6 @@ struct Settings {
     PttType ptt = PttType::Vox;
     std::string pttPort;       // RTS/DTR: the serial port. Empty = the CAT port. AIOC: the
                                // cable's port when last found
-    std::string audioFile;     // Empty = sound card
     // Bluetooth audio (docs/bluetooth-audio.md): the radio's address, empty = off. The modems
     // then use a virtual sound card instead of rxAudio/txAudio, except on Windows, where
     // rxAudio/txAudio are the ends of virtual cables and the bridge uses the other ends,
@@ -45,26 +47,25 @@ struct Settings {
     std::string btRecordAudio;
 
     // Radio Connector only; RadioConnectorCli keeps them but doesn't use them
-    std::vector<std::string> path;   // Digipeaters, e.g. WIDE1-1
-    int retryTries = 4;              // Sends of a message before it fails
-    int retryExtraWait = 10;         // Seconds to wait for an ack, on top of the airtime
-    int holdForMain = 180;           // Seconds a received message waits for the main program
+    std::vector<std::string> path;   // Digipeaters for session.open, e.g. WIDE1-1
     std::string mainAddress;         // host:port of the main program
-    // Connected mode (docs/connected-mode.md): the main way in. RC1 stays for now
+    // Connected mode (docs/connected-mode.md)
     bool connectedEnabled = true;
     int maxSessions = 4;
     int idleMinutes = 10;            // 0 = never
     int pageBytes = 1024;            // 0 = no paging
     std::string busyText = "Busy, try again in a few minutes";
 
-    // Interactive program only: who typed packets go to. Empty = CQ
+    // Interactive program only: who typed packets go to. Empty = CQ. Connected mode: who
+    // to connect to at the start. Empty = wait for calls
     std::string sendTo;
+    // Interactive program only, Connected mode: the radio is tuned here over CAT at the
+    // start. Hz, 0 = leave it
+    long long frequency = 0;
 
-    bool transmits() const { return operation != Operation::Receive; }
-    bool receives()  const { return operation != Operation::Transmit; }
     bool hasCat()    const { return !catPort.empty(); }
     bool keysRadio() const { return ptt != PttType::Vox; }
-    bool usesBluetooth() const { return !bluetooth.empty() && audioFile.empty(); }
+    bool usesBluetooth() const { return !bluetooth.empty(); }
     // The serial port RTS/DTR or AIOC keying uses
     const std::string& keyingPort() const {
         return pttPort.empty() && ptt != PttType::Aioc ? catPort : pttPort;

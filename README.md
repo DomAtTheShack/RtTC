@@ -1,13 +1,13 @@
 ## Radio to Text Connector (RtTC)
 
 Send and receive text over ham radio as AX.25 packets, through direwolf: 300, 1200 or
-9600 baud, with FX.25 error correction. One packet per line, with your callsign and error
-checking.
+9600 baud, with FX.25 error correction. For VHF/UHF.
 
 RtTC is the radio side of a larger system. A separate program, called the **main
-program** in these docs (not released yet), handles the messages; it hands text to
-`RadioConnector`, which sends it over the air to another station and reports back. The
-main program never touches the radio. Any program that speaks the JSON protocol in
+program** in these docs (not released yet), answers the people on the radio, e.g. an
+LLM chat. Any packet station connects to `RadioConnector` with AX.25 connected mode, and
+the connector passes what people type to the main program and its answers back. The main
+program never touches the radio. Any program that speaks the JSON protocol in
 [docs/json-format.md](docs/json-format.md) can take its place, and `RadioConnectorCli`
 works on its own without one.
 
@@ -31,7 +31,7 @@ radio** in Settings ([docs/bluetooth-audio.md](docs/bluetooth-audio.md)).
 | Program | What it is |
 | --- | --- |
 | `RadioConnectorCli` | The menu program: pick settings, then send and receive text by hand. Also the tool for testing a connector over the air |
-| `RadioConnector` | Headless: connects one radio to the main program, with acks and retries ([below](#radioconnector)) |
+| `RadioConnector` | Headless: connects one radio to the main program, for connected-mode sessions ([below](#radioconnector)) |
 | `RadioTests` | Every test, run with no arguments ([below](#tests)) |
 
 ### RadioConnectorCli
@@ -45,29 +45,34 @@ Run `RadioConnectorCli`:
   - Linux: `~/.config/rttc/settings.ini`
 - **Test tools**: loopback self-test, test files, tuning tone (a steady tone at the AFSK
   tones, to set audio levels and check the radio keys; any key stops it), test message,
-  CAT check.
+  CAT check, and WAV files: decode the packets in a recording (`atest`), or write typed
+  packets to a new one (`gen_packets`).
 
 Menu keys: Up/Down (j/k), PgUp/PgDn, Home/End, Enter to choose, Esc/q to go back, or type
 an item's number.
 
-`RadioConnectorCli [file.wav]`: `file.wav` is decoded (Receive) or written (Transmit).
+`RadioConnectorCli file.wav` decodes the packets in `file.wav`, then quits.
 
 #### Sessions
 
 Set **Packet speed** and **Callsign**, then **Mode**:
 
-- **Receive**: shows packets as they arrive.
-- **Transmit**: Enter sends a packet, Tab finishes.
-- **Duplex**: send and receive at once, chat style.
+- **Duplex**: UI packets, chat style. Enter sends a line as a packet, once, with no ack,
+  and every packet heard on the frequency is shown. For testing and watching the channel.
+- **Connected**: AX.25 connected-mode chat, the way a user reaches a RadioConnector
+  ([docs/connected-mode.md](docs/connected-mode.md#radioconnectorcli)). Text is acked and
+  resent until it gets through, and only your sessions are shown. Also a range test
+  between two RadioConnectorCli stations.
 
-**Send to** (Transmit and Duplex) picks who typed packets are addressed to: empty for `CQ`
+Both need the Rx and Tx sound cards and PTT set up.
+
+**Send to** (Duplex) picks who typed packets are addressed to: empty for `CQ`
 (everyone), or a station's callsign, e.g. a RadioConnector's `N0CALL-1` when testing it.
 Packets addressed to someone other than `CQ` show as `FROM>TO:`.
 
-Esc waits for queued packets, then stops; Esc again stops now. direwolf always needs the
-Rx sound card. With an audio file, `atest` decodes and `gen_packets` writes.
+Esc waits for queued packets, then stops; Esc again stops now.
 
-**FX.25** (Transmit and Duplex, Auto unless changed) adds Reed-Solomon error correction,
+**FX.25** (Auto unless changed) adds Reed-Solomon error correction,
 so packets survive some bad bytes. Stations without FX.25 still decode them as plain AX.25.
 Receiving always decodes FX.25. Packets are shorter with it on (179 bytes of text, or 139
 with 64 check bytes), so long lines take more packets.
@@ -75,12 +80,10 @@ with 64 check bytes), so long lines take more packets.
 ### RadioConnector
 
 `RadioConnector --main 127.0.0.1:9000` runs headless: it connects one radio (direwolf,
-AX.25 with FX.25) to the main program, which sends it text and config as JSON
-lines over TCP. The main way in is **AX.25 connected mode**: any packet station can
-connect and chat with the main program, several at once, with long replies sent a page at
-a time ([docs/connected-mode.md](docs/connected-mode.md)). The older `RC1` messages
-between connectors, split into parts with acks and retries, still work for now and will
-be removed.
+AX.25 with FX.25) to the main program, which sends it text and config as JSON lines over
+TCP. Any packet station can connect with **AX.25 connected mode** and chat with the main
+program, several at once, with long replies sent a page at a time
+([docs/connected-mode.md](docs/connected-mode.md)).
 
 - It dials the main program and retries every 5 s; the radio keeps running meanwhile. Pick a
   port nothing else uses (8080 is often a web server's).
@@ -94,7 +97,7 @@ be removed.
 | --- | --- |
 | `--main host:port` | Where the main program listens (saved in `connector.ini`) |
 | `--settings file` | Use this settings file instead of `connector.ini` |
-| `--verbose` | Log every frame sent (`tx`) and heard (`rx`), every session frame (`agw out`, `agw in`), and every JSON line (`to main`, `from main`) |
+| `--verbose` | Log every session frame (`agw out`, `agw in`) and every JSON line (`to main`, `from main`) |
 | `--direwolf` | Also show direwolf's own output, as `direwolf:` lines |
 | `--quit-on-disconnect` | Exit when the main program hangs up (RadioTests uses it) |
 
@@ -105,15 +108,11 @@ Logs go to stderr.
 - [docs/radios.md](docs/radios.md): radios that are tested, that should work, and setups
   that won't.
 - [docs/connected-mode.md](docs/connected-mode.md): connected-mode sessions, how several
-  users share the channel, and the plan for removing `RC1`.
-- [docs/connector-protocol.md](docs/connector-protocol.md): the protocol. JSON between the
-  main program and a connector, and the `RC1` air format between connectors.
+  users share the channel, and RadioConnectorCli's Connected mode for testing by hand.
+- [docs/connector-protocol.md](docs/connector-protocol.md): the Radio Connector and its
+  protocol, in overview.
 - [docs/json-format.md](docs/json-format.md): the JSON format, message by message and field
   by field, for writing a main program.
-- [docs/ack-guide.md](docs/ack-guide.md): how the acks work, when each is sent, and the code
-  that does it.
-- [docs/rc1-test-messages.md](docs/rc1-test-messages.md): `RC1` lines to type in
-  RadioConnectorCli to test a RadioConnector's acks by hand.
 - [docs/bluetooth-audio.md](docs/bluetooth-audio.md): audio over Bluetooth to the radios
   that support it, how to set it up, and how the radio's protocol works.
 
@@ -156,9 +155,9 @@ Source layout:
 
 | Folder | What's in it |
 | --- | --- |
-| `src/` | RadioConnectorCli (`main.cpp`, `session.cpp`), settings, the OS layer (`backend.cpp`), test cases |
+| `src/` | RadioConnectorCli (`main.cpp`; the Duplex and Connected screens in `session.cpp`), settings, the OS layer (`backend.cpp`), test cases |
 | `src/Radio/` | direwolf's command lines and config, test audio (`fsk.cpp`), and CAT radio control |
-| `src/Connector/` | RadioConnector (`radio_connector.cpp`), its ack engine (`connector.cpp`), config, and AX.25/KISS (`packet.cpp`) |
+| `src/Connector/` | RadioConnector (`radio_connector.cpp`), connected-mode sessions (`sessions.cpp`) over direwolf's AGW port (`agw.cpp`), the JSON envelope (`connector.cpp`), config, and AX.25/KISS (`packet.cpp`) |
 | `src/Bluetooth/` | Bluetooth audio: the radio's protocol (`bt_protocol.cpp`), connections (`rfcomm_*`), the virtual sound card (`virtual_audio_*`) and the bridge (`bt_audio.cpp`) |
 | `src/third_party/` | nlohmann/json and Google's libsbc, copied in |
 | `src/tests/` | RadioTests (`radio_tests.cpp`) and the test audio |
@@ -169,15 +168,16 @@ Source layout:
 `RadioTests` runs every test with no arguments (`ctest` runs it too). A group that can't
 run on this computer is skipped, not failed:
 
-- `unit`: settings, command lines, AX.25/KISS, FX.25, scoring, the connector's protocol and
-  ack logic, the Bluetooth protocol
+- `unit`: settings, command lines, AX.25/KISS, FX.25, scoring, the connector's config and
+  connected-mode sessions, the Bluetooth protocol
 - `audio`: decodes each packet recording in `src/tests/audio` (see its README) and checks
   the text. Skipped without atest
 - `cat`: frequency, mode and PTT through Hamlib's dummy rig. `--cat-port COM5` tests a
   real radio instead (it is keyed for half a second)
 - `air`: starts RadioConnector and a stand-in station on the sound cards from
-  `settings.ini` (e.g. VB-Cable looped back), then checks receiving, a missing part, and
-  sending with acks. Skipped without sound cards, or when PTT keys a radio (CAT, RTS or DTR)
+  `settings.ini` (e.g. VB-Cable looped back), then checks a session in with a two-page
+  reply, two users at once, and a session the connector opens. Skipped without sound
+  cards, or when PTT keys a radio (CAT, RTS, DTR or AIOC)
 
 `--only unit,cat` or `--skip air` picks groups; `RadioTests --help` lists every option.
 To regenerate the test audio: `RadioTests --generate ../src/tests/audio` from the build folder.

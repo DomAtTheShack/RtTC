@@ -4,6 +4,8 @@
 #include <cctype>
 #include <utility>
 
+#include "packet.h"
+
 namespace connector {
 
 namespace {

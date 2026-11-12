@@ -147,7 +147,7 @@ void testSettingsRoundTrip() {
     s.txAudio = "default";
     s.catPort = "/dev/ttyACM0";
     s.catBaud = 115200;
-    s.audioFile = "C:\\Users\\me\\My Recordings\\packet test.wav";
+    s.txAudioDesc = "C:\\Users\\me\\My Recordings: = test";   // Spaces, colons and = survive
 
     Settings back = parseSettings(formatSettings(s));
     CHECK(back.operation == Operation::Duplex);
@@ -157,7 +157,18 @@ void testSettingsRoundTrip() {
     CHECK(back.txAudio == "default");
     CHECK(back.catPort == "/dev/ttyACM0");
     CHECK(back.catBaud == 115200);
-    CHECK(back.audioFile == s.audioFile);
+    CHECK(back.txAudioDesc == s.txAudioDesc);
+
+    // RadioConnectorCli's connected mode: who to connect to and the frequency to tune to
+    s.operation = Operation::Connected;
+    s.sendTo = "K1ABC-3";
+    s.frequency = 145050000;
+    back = parseSettings(formatSettings(s));
+    CHECK(back.operation == Operation::Connected);
+    CHECK(back.sendTo == "K1ABC-3");
+    CHECK(back.frequency == 145050000);
+    CHECK(parseSettings("frequency=145.05\n").frequency == 0);   // Hz, whole numbers only
+    CHECK(parseSettings("frequency=-5\n").frequency == 0);
 }
 
 void testSettingsGarbage() {
@@ -185,7 +196,11 @@ void testPacketSettings() {
                                  "quiet=1\npacket_baud=4800\noperation=transmit\ncallsign=N0CALL\n");
     CHECK(old.rigModel == defaultRigModel);
     CHECK(old.packetBaud == 1200);                        // 4800 isn't a direwolf speed we offer
-    CHECK(old.operation == Operation::Transmit && old.callsign == "N0CALL");
+    CHECK(old.operation == Operation::Duplex && old.callsign == "N0CALL");   // Transmit is gone
+    // Receive is gone too, and the audio file moved to the Test tools
+    Settings older = parseSettings("operation=receive\naudio_file=C:\\x.wav\n");
+    CHECK(older.operation == Operation::Duplex);
+    CHECK(formatSettings(older).find("audio_file") == std::string::npos);
 }
 
 void testPttSettings() {
@@ -418,6 +433,8 @@ void testDirewolfConfig() {
     std::string agw = direwolfConfig(s, "1", "2", 7001, 7002, 180);   // The connector, for connected mode
     CHECK(agw.find("AGWPORT 7002\nPACLEN 180\n") != std::string::npos);
     CHECK(agw.find("KISSPORT 7001\n") != std::string::npos);
+    std::string agwOnly = direwolfConfig(s, "1", "2", 0, 7002, 180);   // RadioConnector: no KISS
+    CHECK(agwOnly.find("KISSPORT 0\n") != std::string::npos && agwOnly.find("KISSPORT 7") == std::string::npos);
     CHECK(vox.find("PTT") == std::string::npos);           // VOX: direwolf mustn't key anything
     Settings vhf = s;
     vhf.packetBaud = 1200;
@@ -506,335 +523,17 @@ void testAx25Path() {
     CHECK(back && back->info == "x");
 }
 
-void testAirFormat() {
+void testConnectorText() {
     using namespace connector;
-    CHECK(hexId(0x3F) == "03F");
-    CHECK(hexId(0x1FFF) == "FFF");
-    CHECK(formatData(0x3F, 2, 5, "a|b") == "RC1|D|03F|2/5|a|b");
-    auto data = parseAir("RC1|D|03F|2/5|a|b");
-    CHECK(data && data->kind == AirFrame::Kind::Data && data->id == 0x3F);
-    CHECK(data && data->part == 2 && data->total == 5 && data->text == "a|b");
-    CHECK(parseAir("RC1|D|03F|1/1|") && parseAir("RC1|D|03F|1/1|")->text.empty());
-    CHECK(!parseAir("RC1|D|03F|6/5|x"));      // Part past the end
-    CHECK(!parseAir("RC1|D|03F|1/41|x"));     // More than 40 parts
-    CHECK(!parseAir("RC1|D|3F|1/1|x"));       // ID is 3 digits
-    CHECK(!parseAir("RC2|D|03F|1/1|x"));      // Not our version
-    CHECK(!parseAir("hello"));
-
-    CHECK(formatRanges({1, 2, 3, 5}) == "1-3,5");
-    CHECK(formatRanges({7}) == "7");
-    CHECK(formatAck(0xABC, {1, 2, 3, 5}) == "RC1|A|ABC|1-3,5");
-    auto ack = parseAir("RC1|A|abc|1-3,5\r\n");
-    CHECK(ack && ack->kind == AirFrame::Kind::Ack && ack->id == 0xABC);
-    CHECK(ack && ack->parts == std::vector<int>({1, 2, 3, 5}));
-    CHECK(!parseRanges("3-1"));
-    CHECK(!parseRanges("0"));
-    CHECK(!parseRanges("1,,2"));
-    CHECK(!parseAir("RC1|A|001|"));
-
-    CHECK(formatResult(1, "OK") == "RC1|R|001|OK");
-    auto result = parseAir("RC1|R|001|EXP");
-    CHECK(result && result->kind == AirFrame::Kind::Result && result->result == "EXP");
-    CHECK(!parseAir("RC1|R|001|MAYBE"));
-
-    // Part sizes: the packet limit minus the header
-    CHECK(partBytes(1, 0) == 163);
-    CHECK(partBytes(0, 0) == 240);
-    CHECK(partBytes(1, 2) == 149);   // Each digipeater takes 7 bytes of the FX.25 block
+    // Text per I frame: one FX.25 block, less 7 bytes for each digipeater
+    CHECK(connectedChunkBytes(1, 0) == 179);
+    CHECK(connectedChunkBytes(0, 0) == 256);
+    CHECK(connectedChunkBytes(1, 2) == 165);
     CHECK(validUtf8("caf\xc3\xa9 \xf0\x9f\x93\xbb"));
     CHECK(!validUtf8("\xc3"));
     CHECK(!validUtf8("\xc0\xaf"));       // Overlong
     CHECK(!validUtf8("\xed\xa0\x80"));   // Surrogate
-}
-
-// Two connectors on a simulated channel. drop() decides which frames get lost
-struct Air {
-    struct Station {
-        std::string call;
-        std::unique_ptr<connector::Engine> engine;
-        std::vector<connector::Json> toMain;
-        int sent = 0;
-    };
-    Station a, b;
-    connector::TimePoint now{};
-    std::vector<packet::Frame> onAir;
-    std::function<bool(const packet::Frame&)> drop = [](const packet::Frame&) { return false; };
-
-    explicit Air(int holdSeconds = 180) {
-        for (Station* s : {&a, &b}) {
-            s->call = s == &a ? "N0CALL-7" : "K1ABC-3";
-            s->engine = std::make_unique<connector::Engine>(connector::Hooks{
-                [this, s](const std::string& to, const std::string& info) {
-                    s->sent++;
-                    onAir.push_back({s->call, to, {}, info});
-                    return true;
-                },
-                [s](const connector::Json& message) { s->toMain.push_back(message); }}, s == &a ? 0x10 : 0x20);
-            connector::Options o;
-            o.callsign = s->call;
-            o.holdForMainSeconds = holdSeconds;
-            s->engine->setOptions(o);
-            s->engine->setRadioReady(true, now);
-            s->engine->setMainConnected(true, now);
-        }
-    }
-
-    void run(double seconds) {
-        auto end = now + std::chrono::duration_cast<connector::Clock::duration>(std::chrono::duration<double>(seconds));
-        while (now < end) {
-            now += std::chrono::milliseconds(100);
-            std::vector<packet::Frame> frames;
-            frames.swap(onAir);
-            for (const packet::Frame& frame : frames) {
-                if (drop(frame)) continue;
-                a.engine->onFrame(frame, now);
-                b.engine->onFrame(frame, now);
-            }
-            a.engine->tick(now);
-            b.engine->tick(now);
-        }
-    }
-
-    void send(const std::string& text, const std::string& id = "m-1") {
-        a.engine->send({{"to", "k1abc-3"}, {"text", text}, {"ref", "order-881"}}, id, now);
-    }
-
-    static std::vector<connector::Json> ofType(const Station& s, const std::string& type) {
-        std::vector<connector::Json> out;
-        for (const connector::Json& m : s.toMain)
-            if (m["type"] == type) out.push_back(m);
-        return out;
-    }
-
-    static std::vector<std::string> states(const Station& s) {
-        std::vector<std::string> out;
-        for (const connector::Json& m : ofType(s, "message.status")) out.push_back(m["body"]["state"]);
-        return out;
-    }
-
-    // The main program at b takes every message it's given
-    void bAcksAll() {
-        for (const connector::Json& m : ofType(b, "message.received")) b.engine->mainAck(m["id"], now);
-    }
-};
-
-std::string longText(size_t bytes) {
-    std::string text;
-    for (size_t i = 0; text.size() < bytes; i++) text += "line " + std::to_string(i) + " | caf\xc3\xa9; ";
-    text.resize(bytes);
-    // Don't end mid-character
-    while (!text.empty() && (static_cast<uint8_t>(text.back()) & 0x80)) text.pop_back();
-    return text;
-}
-
-void testConnectorDelivery() {
-    Air air;
-    std::string text = longText(500);   // 4 parts at 163 bytes
-    air.send(text);
-    CHECK(!air.a.toMain.empty() && air.a.toMain[0]["type"] == "message.accepted");   // Before any status
-    CHECK(!air.a.toMain.empty() && air.a.toMain[0]["re"] == "m-1");
-    CHECK(!air.a.toMain.empty() && air.a.toMain[0]["body"]["msgId"] == "N0CALL-7/010");
-    CHECK(!air.a.toMain.empty() && air.a.toMain[0]["body"]["parts"] == 4);
-    air.run(20);
-
-    auto received = Air::ofType(air.b, "message.received");
-    CHECK(received.size() == 1);
-    CHECK(!received.empty() && received[0]["body"]["text"] == text);   // Exact, UTF-8 intact
-    CHECK(!received.empty() && received[0]["body"]["from"] == "N0CALL-7");
-    CHECK(!received.empty() && received[0]["body"]["msgId"] == "N0CALL-7/010");
-    CHECK(Air::states(air.a).back() == "received");   // b's main program hasn't said yet
-    CHECK(air.b.engine->heldForMain() == 1);
-
-    air.bAcksAll();
-    air.run(5);
-    auto states = Air::states(air.a);
-    // Frames arrive instantly here, so the ack can beat the airtime estimate and skip "waiting"
-    states.erase(std::remove(states.begin(), states.end(), "waiting"), states.end());
-    CHECK(states == std::vector<std::string>({"queued", "sending", "received", "delivered"}));
-    auto last = Air::ofType(air.a, "message.status").back()["body"];
-    CHECK(last["ref"] == "order-881");
-    CHECK(last["attempt"] == 1);
-    CHECK(last["partsAcked"] == connector::Json({1, 2, 3, 4}));
-    CHECK(air.a.engine->inFlight() == 0);
-    CHECK(air.b.engine->heldForMain() == 0);
-}
-
-void testConnectorLostPart() {
-    Air air;
-    int dropped = 0;
-    air.drop = [&](const packet::Frame& f) {
-        if (f.info.rfind("RC1|D|010|2/", 0) == 0 && dropped == 0) return ++dropped > 0;
-        return false;
-    };
-    std::string text = longText(500);
-    air.send(text);
-    air.run(40);
-    air.bAcksAll();
-    air.run(5);
-    auto received = Air::ofType(air.b, "message.received");
-    CHECK(received.size() == 1 && received[0]["body"]["text"] == text);
-    auto states = Air::states(air.a);
-    CHECK(std::find(states.begin(), states.end(), "retrying") != states.end());
-    CHECK(states.back() == "delivered");
-    CHECK(Air::ofType(air.a, "message.status").back()["body"]["attempt"] == 2);
-    // The retry sent part 2 only: 4 parts, then 1
-    CHECK(air.a.sent == 5);
-}
-
-void testConnectorNoAnswer() {
-    Air air;
-    air.drop = [](const packet::Frame&) { return true; };   // Nobody hears anything
-    air.send("hello");
-    air.run(200);
-    auto last = Air::ofType(air.a, "message.status").back()["body"];
-    CHECK(last["state"] == "failed");
-    CHECK(last["attempt"] == 4);
-    CHECK(last["reason"].is_string());
-    CHECK(air.a.sent == 4);   // One part, sent once per try
-    CHECK(air.a.engine->inFlight() == 0);
-}
-
-void testConnectorExpired() {
-    Air air(5);   // b holds messages 5 s for its main program
-    air.b.engine->setMainConnected(false, air.now);
-    air.send("nobody home");
-    air.run(30);
-    CHECK(Air::ofType(air.b, "message.received").empty());
-    CHECK(Air::states(air.a).back() == "expired");
-
-    // b's main program comes back after the hold: the message is gone, and a repeat
-    // part gets the ack and EXP again, not a second delivery
-    air.b.engine->setMainConnected(true, air.now);
-    air.onAir.push_back({"N0CALL-7", "K1ABC-3", {}, connector::formatData(0x10, 1, 1, "nobody home")});
-    air.run(5);
-    CHECK(Air::ofType(air.b, "message.received").empty());
-}
-
-void testConnectorReconnect() {
-    Air air;
-    air.b.engine->setMainConnected(false, air.now);
-    air.send("held for you");
-    air.run(20);
-    CHECK(Air::ofType(air.b, "message.received").empty());
-    CHECK(air.b.engine->heldForMain() == 1);
-    air.b.engine->setMainConnected(true, air.now);   // Sent on reconnect
-    auto received = Air::ofType(air.b, "message.received");
-    CHECK(received.size() == 1 && received[0]["body"]["text"] == "held for you");
-    air.bAcksAll();
-    air.run(5);
-    CHECK(Air::states(air.a).back() == "delivered");
-
-    // A repeat after delivery is acked but not delivered twice
-    air.onAir.push_back({"N0CALL-7", "K1ABC-3", {}, connector::formatData(0x10, 1, 1, "held for you")});
-    air.run(5);
-    CHECK(Air::ofType(air.b, "message.received").size() == 1);
-}
-
-void testConnectorLostResult() {
-    Air air;
-    bool droppedResult = false;
-    air.drop = [&](const packet::Frame& f) {
-        if (!droppedResult && f.info == "RC1|R|010|OK") return droppedResult = true;
-        return false;
-    };
-    air.send("result goes missing");
-    air.run(10);
-    air.bAcksAll();
-    air.run(250);   // Past b's hold time + 30 s: a pokes with the last part
-    CHECK(droppedResult);
-    CHECK(Air::states(air.a).back() == "delivered");
-    CHECK(Air::ofType(air.b, "message.received").size() == 1);
-}
-
-void testConnectorOneAtATime() {
-    Air air;
-    air.drop = [](const packet::Frame& f) { return f.source == "K1ABC-3"; };   // No acks
-    air.send("first", "m-1");
-    air.send("second", "m-2");
-    CHECK(air.a.engine->txQueue() == 1);
-    CHECK(air.a.engine->inFlight() == 1);
-    air.run(1);
-    CHECK(air.a.sent == 1);   // Only the first message is on the air
-    air.drop = [](const packet::Frame&) { return false; };
-    air.run(60);
-    air.bAcksAll();
-    air.run(10);
-    CHECK(Air::ofType(air.b, "message.received").size() == 2);
-    CHECK(air.a.engine->txQueue() == 0);
-}
-
-// At 300 baud one full part takes ~7 s, so the receiver must not ack between parts
-void testConnectorSlowAck() {
-    using namespace std::chrono;
-    struct Rx {
-        std::vector<std::pair<double, std::string>> acks;   // When, which parts
-        connector::TimePoint start{}, now{};
-        connector::Engine engine;
-        Rx() : engine({[this](const std::string&, const std::string& info) {
-                           auto air = connector::parseAir(info);
-                           if (air && air->kind == connector::AirFrame::Kind::Ack)
-                               acks.push_back({duration<double>(now - start).count(), connector::formatRanges(air->parts)});
-                           return true;
-                       },
-                       [](const connector::Json&) {}}, 0x20) {
-            connector::Options o;
-            o.callsign = "K1ABC-3";
-            o.baud = 300;
-            engine.setOptions(o);
-            engine.setRadioReady(true, now);
-        }
-        void runTo(double seconds) {
-            while (duration<double>(now - start).count() < seconds) {
-                now += milliseconds(100);
-                engine.tick(now);
-            }
-        }
-        void hear(int part) {
-            engine.onFrame({"N0CALL-7", "K1ABC-3", {}, connector::formatData(0x10, part, 4, "x")}, now);
-        }
-    };
-    const double gap = 6.5;
-
-    Rx all;   // Every part heard: one ack, once the last is in
-    for (int part = 1; part <= 4; part++) {
-        all.runTo(gap * (part - 1));
-        all.hear(part);
-    }
-    all.runTo(gap * 3 + 10);
-    CHECK(all.acks.size() == 1);
-    CHECK(!all.acks.empty() && all.acks[0].first >= gap * 3 && all.acks[0].second == "1-4");
-
-    Rx middle;   // Part 2 lost: the gap from 1 to 3 is two parts long
-    for (int part : {1, 3, 4}) {
-        middle.runTo(gap * (part - 1));
-        middle.hear(part);
-    }
-    middle.runTo(gap * 3 + 10);
-    CHECK(middle.acks.size() == 1);
-    CHECK(!middle.acks.empty() && middle.acks[0].first > gap * 3 && middle.acks[0].second == "1,3-4");
-
-    Rx tail;   // Parts 2-4 lost: ack part 1 once they'd have been heard
-    tail.hear(1);
-    tail.runTo(60);
-    CHECK(tail.acks.size() == 1);
-    CHECK(!tail.acks.empty() && tail.acks[0].first > gap * 3 && tail.acks[0].first < 30);
-    CHECK(!tail.acks.empty() && tail.acks[0].second == "1");
-}
-
-void testConnectorRequests() {
-    Air air;
-    auto lastError = [&] { return air.a.toMain.back()["body"]; };
-    air.a.engine->send({{"to", "not a call"}, {"text", "x"}}, "m-1", air.now);
-    CHECK(air.a.toMain.back()["type"] == "error" && lastError()["field"] == "to");
-    CHECK(air.a.toMain.back()["re"] == "m-1");
-    air.a.engine->send({{"to", "N0CALL-7"}, {"text", "x"}}, "m-2", air.now);
-    CHECK(lastError()["field"] == "to");   // Ourselves
-    air.a.engine->send({{"to", "K1ABC-3"}, {"text", ""}}, "m-3", air.now);
-    CHECK(lastError()["field"] == "text");
-    air.a.engine->send({{"to", "K1ABC-3"}, {"text", std::string(40 * 163 + 1, 'x')}}, "m-4", air.now);
-    CHECK(lastError()["code"] == "too_long");
-    air.a.engine->send({{"to", "K1ABC-3"}, {"text", std::string(40 * 163, 'x')}}, "m-5", air.now);
-    CHECK(air.a.toMain.back()["type"] == "message.status");   // Exactly 40 parts is fine
+    CHECK(isoUtc(std::chrono::system_clock::time_point{}) == "1970-01-01T00:00:00Z");
 }
 
 void testConnectorConfig() {
@@ -843,16 +542,15 @@ void testConnectorConfig() {
     Json config = configToJson(s);
     CHECK(config["fx25"] == "auto");   // On by default
     CHECK(config["ptt"]["type"] == "vox");
-    CHECK(config["retry"]["tries"] == 4);
+    CHECK(!config.contains("retry") && !config.contains("holdForMainSeconds"));   // RC1's, gone
     CHECK(missingConfig(s) == "callsign");
 
     ConfigChange change = applyConfig(s, {{"callsign", "n0call-7"}, {"fx25", 32}, {"path", {"wide1-1"}}});
     CHECK(change.ok && change.restartRequired);
     CHECK(s.callsign == "N0CALL-7" && s.fx25 == 32 && s.path == std::vector<std::string>({"WIDE1-1"}));
 
-    change = applyConfig(s, {{"retry", {{"tries", 6}}}, {"holdForMainSeconds", 60}});
-    CHECK(change.ok && !change.restartRequired);
-    CHECK(s.retryTries == 6 && s.retryExtraWait == 10 && s.holdForMain == 60);
+    CHECK(applyConfig(s, {{"retry", {{"tries", 6}}}}).field == "retry");
+    CHECK(applyConfig(s, {{"path", std::vector<std::string>(8, "WIDE1-1")}}).field == "path");   // AGW takes 7
 
     change = applyConfig(s, {{"callsign", "N1NEW"}, {"fx25", "sometimes"}});
     CHECK(!change.ok && change.field == "fx25");
@@ -911,9 +609,8 @@ void testConnectorConfig() {
 
     // The connector's keys survive settings.ini
     Settings back = parseSettings(formatSettings(s));
-    CHECK(back.path == s.path && back.retryTries == 6 && back.holdForMain == 60);
-    CHECK(back.mainAddress == "localhost:9000");
-    CHECK(parseSettings("retry_tries=0\n").retryTries == 4);   // Out of range keeps the default
+    CHECK(back.path == s.path && back.mainAddress == "localhost:9000");
+    CHECK(parseSettings("max_sessions=0\n").maxSessions == 4);   // Out of range keeps the default
 
     // Connected mode
     Settings c;
@@ -1296,20 +993,6 @@ void testSessionRadioDown() {
     CHECK(link.sent.size() == before + 1 && link.sent.back().kind == 'X');   // Registered again
 }
 
-// A connected user typing "RC1|..." mustn't reach the RC1 engine
-void testConnectorIgnoresIFrames() {
-    Air air;
-    packet::Frame frame{"K1ABC-3", "N0CALL-7", {}, "RC1|D|001|1/1|sneaky"};
-    frame.ui = false;
-    air.a.engine->onFrame(frame, air.now);
-    air.run(5);
-    CHECK(Air::ofType(air.a, "message.received").empty());
-    frame.ui = true;
-    air.a.engine->onFrame(frame, air.now);
-    air.run(5);
-    CHECK(Air::ofType(air.a, "message.received").size() == 1);
-}
-
 // Bluetooth audio (protocol only; no radio needed)
 
 void testBtAddresses() {
@@ -1484,8 +1167,6 @@ void testBtSettings() {
     CHECK(back.bluetooth == s.bluetooth && back.bluetoothName == s.bluetoothName);
     CHECK(back.btPlayAudio == "3" && back.btRecordAudio == "4");
     CHECK(s.usesBluetooth());
-    s.audioFile = "x.wav";
-    CHECK(!s.usesBluetooth());   // A file wins
 
     // Sound keys the radio, so VOX only
     s.catPort = "/dev/ttyUSB0";
@@ -1538,18 +1219,8 @@ int runUnit() {
         {"FX.25", testFx25},
         {"AX.25 test audio", testAx25Audio},
         {"AX.25 digipeater path", testAx25Path},
-        {"Connector air format", testAirFormat},
-        {"Connector delivery", testConnectorDelivery},
-        {"Connector lost part", testConnectorLostPart},
-        {"Connector no answer", testConnectorNoAnswer},
-        {"Connector expired", testConnectorExpired},
-        {"Connector main reconnect", testConnectorReconnect},
-        {"Connector lost result", testConnectorLostResult},
-        {"Connector one message at a time", testConnectorOneAtATime},
-        {"Connector waits at 300 baud before acking", testConnectorSlowAck},
-        {"Connector request errors", testConnectorRequests},
+        {"Connector text and frame sizes", testConnectorText},
         {"Connector config", testConnectorConfig},
-        {"Connector ignores I frames", testConnectorIgnoresIFrames},
         {"AGW frames", testAgwFrames},
         {"Connected mode pages", testPages},
         {"Connected session in, with paging", testSessionIncoming},
@@ -1696,13 +1367,11 @@ int runCat(const Options& options) {
 
 using Clock = std::chrono::steady_clock;
 
-// What the test hears: JSON lines from the connector, and frames from the stand-in station
-// (KISS frames, and AGW frames for its connected-mode sessions)
+// What the test hears: JSON lines from the connector, and AGW frames from the stand-in
+// station's connected-mode sessions
 struct Heard {
-    bool frame = false;
-    string line;
-    packet::Frame packet;
     bool isAgw = false;
+    string line;
     agw::Frame agwFrame;
 };
 
@@ -1803,8 +1472,6 @@ public:
         mainLink.shutdown();   // The connector quits when its main program hangs up
         if (mainReader.joinable()) mainReader.join();
         connector.stop(std::chrono::seconds(10));
-        peerLink.shutdown();
-        if (peerReader.joinable()) peerReader.join();
         peerAgw.shutdown();
         if (peerAgwReader.joinable()) peerAgwReader.join();
         peer.stop();
@@ -1845,36 +1512,20 @@ public:
         station.catPort.clear();
         station.ptt = PttType::Vox;
         station.pttPort.clear();
-        station.audioFile.clear();
         station.path.clear();
 
-        // The stand-in station: its own direwolf, driven over KISS (RC1) and AGW (connected
-        // mode) by this program
+        // The stand-in station: its own direwolf, driven over AGW by this program
         Settings peerSettings = station;
         peerSettings.callsign = peerCall;
-        int peerPort = os::freeTcpPort();
         int peerAgwPort = os::freeTcpPort();
-        while (peerAgwPort == peerPort) peerAgwPort = os::freeTcpPort();
         {
             std::ofstream out(workDir / "peer.conf");
-            out << direwolfConfig(peerSettings, direwolfDevice(rx, false), direwolfDevice(tx, true), peerPort,
+            out << direwolfConfig(peerSettings, direwolfDevice(rx, false), direwolfDevice(tx, true), 0,
                                   peerAgwPort, connector::direwolfPaclen(peerSettings));
         }
         if (!peer.start(direwolfArgs("peer.conf"), workDir.string()))
             return failSetup("couldn't start direwolf: " + peer.error());
         auto deadline = Clock::now() + std::chrono::seconds(15);
-        while (!peerLink.connect("127.0.0.1", peerPort)) {
-            if (Clock::now() > deadline) return failSetup("direwolf didn't open its KISS port:\n" + peer.log());
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        }
-        peerReader = std::thread([this] {
-            packet::KissDecoder decoder;
-            char buffer[1024];
-            long n;
-            while ((n = peerLink.read(buffer, sizeof buffer)) > 0)
-                for (const packet::Bytes& bytes : decoder.feed(std::string_view(buffer, static_cast<size_t>(n))))
-                    if (auto frame = packet::decode(bytes)) inbox.push({true, {}, *frame});
-        });
         while (!peerAgw.connect("127.0.0.1", peerAgwPort)) {
             if (Clock::now() > deadline) return failSetup("direwolf didn't open its AGW port:\n" + peer.log());
             std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -1885,7 +1536,7 @@ public:
             long n;
             while ((n = peerAgw.read(buffer, sizeof buffer)) > 0)
                 for (agw::Frame& frame : decoder.feed(std::string_view(buffer, static_cast<size_t>(n))))
-                    inbox.push({false, {}, {}, true, std::move(frame)});
+                    inbox.push({true, {}, std::move(frame)});
         });
         peerSend(agw::registerCall(peerCall));
         peerSend(agw::registerCall(peerCall2));
@@ -1927,92 +1578,6 @@ public:
     }
 
     bool setupFailed() const { return brokenSetup; }
-
-    // Two parts in, an ack for both, the text to the main program, then OK once it acks
-    bool receives() {
-        mark();
-        string one = "Over the air test, part one. ";
-        string two = "Part two.";
-        sendData("A01", 1, 2, one);
-        sendData("A01", 2, 2, two);
-        const connector::Json* received = nullptr;
-        bool ok = waitFor(seconds(), [&] {
-            received = findLine("message.received", [&](const connector::Json& body) {
-                return body.value("msgId", "") == peerCall + "/A01";
-            });
-            return received && heardFromConnector("RC1|A|A01|1-2");
-        });
-        if (!ok) return fail("no ack for both parts, or the text never reached the main program");
-        if ((*received)["body"].value("text", "") != one + two)
-            return fail("text came out as \"" + (*received)["body"].value("text", "") + "\"");
-        sendToConnector({{"v", 1}, {"type", "ack"}, {"re", (*received)["id"]}, {"body", connector::Json::object()}});
-        if (!waitFor(seconds(), [&] { return heardFromConnector("RC1|R|A01|OK"); }))
-            return fail("no RC1|R|A01|OK after the main program acked");
-        return true;
-    }
-
-    // Parts 1 and 3: the ack says which it has. Then part 2 completes it
-    bool missingPart() {
-        mark();
-        sendData("A02", 1, 3, "one ");
-        sendData("A02", 3, 3, "three");
-        if (!waitFor(seconds(), [&] { return heardFromConnector("RC1|A|A02|1,3"); }))
-            return fail("no RC1|A|A02|1,3 for the two parts sent");
-        sendData("A02", 2, 3, "two ");
-        if (!waitFor(seconds(), [&] { return heardFromConnector("RC1|A|A02|1-3"); }))
-            return fail("no RC1|A|A02|1-3 once part 2 came");
-        if (auto* received = findLine("message.received", [&](const connector::Json& body) {
-                return body.value("msgId", "") == peerCall + "/A02";
-            }))
-            sendToConnector({{"v", 1}, {"type", "ack"}, {"re", (*received)["id"]}, {"body", connector::Json::object()}});
-        return true;
-    }
-
-    // The main program sends a long message; the stand-in station acks every part and
-    // sends OK, and the main program sees it delivered
-    bool sends() {
-        mark();
-        string text;
-        for (int i = 1; text.size() < 400; i++)
-            text += "Line " + std::to_string(i) + " of the over the air sending test. ";
-        sendToConnector({{"v", 1}, {"type", "message.send"}, {"id", "t-1"}, {"re", nullptr},
-                         {"body", {{"to", peerCall}, {"text", text}}}});
-        std::map<int, string> parts;
-        int total = 0;
-        string id;
-        bool answered = false;
-        bool ok = waitFor(seconds() * 2, [&] {
-            for (size_t i = frameStart; i < frames.size(); i++) {
-                const packet::Frame& f = frames[i];
-                auto air = connector::parseAir(f.info);
-                if (f.source != connectorCall || f.destination != peerCall || !air ||
-                    air->kind != connector::AirFrame::Kind::Data) continue;
-                id = connector::hexId(air->id);
-                total = air->total;
-                parts[air->part] = air->text;
-            }
-            if (!answered && total > 0 && static_cast<int>(parts.size()) == total) {
-                answered = true;
-                sendFrame("RC1|A|" + id + "|1-" + std::to_string(total));
-                sendFrame("RC1|R|" + id + "|OK");
-            }
-            return findLine("message.status", [](const connector::Json& body) {
-                return body.value("state", "") == "delivered";
-            }) != nullptr;
-        });
-        if (!ok) {
-            if (findLine("message.accepted", [](const connector::Json&) { return true; }) == nullptr)
-                return fail("the connector didn't accept message.send");
-            return fail(total == 0 ? "the stand-in station heard no parts"
-                        : !answered ? "the stand-in station heard " + std::to_string(parts.size()) + " of " +
-                                      std::to_string(total) + " parts"
-                                    : "the connector never reported delivered after the ack and OK");
-        }
-        string joined;
-        for (auto& [number, part] : parts) joined += part;
-        if (joined != text) return fail("the parts didn't join back into the text sent");
-        return true;
-    }
 
     // Connected mode on, then the stand-in station connects, types a line, and reads a
     // two-page reply, asking for the second page with M
@@ -2150,7 +1715,6 @@ private:
     // Steps look only at what's heard after their start
     void mark() {
         lineStart = lines.size();
-        frameStart = frames.size();
         agwStart = agwFrames.size();
     }
 
@@ -2206,8 +1770,6 @@ private:
             if (!heard) continue;
             if (heard->isAgw) {
                 agwFrames.push_back(std::move(heard->agwFrame));
-            } else if (heard->frame) {
-                frames.push_back(heard->packet);
             } else {
                 connector::Json json = connector::Json::parse(heard->line, nullptr, false);
                 if (!json.is_discarded()) lines.push_back(json);
@@ -2224,21 +1786,6 @@ private:
         return nullptr;
     }
 
-    bool heardFromConnector(const string& info) const {
-        for (size_t i = frameStart; i < frames.size(); i++)
-            if (frames[i].source == connectorCall && frames[i].destination == peerCall && frames[i].info == info)
-                return true;
-        return false;
-    }
-
-    void sendData(const string& id, int part, int total, const string& text) {
-        sendFrame(connector::formatData(std::stoul(id, nullptr, 16), part, total, text));
-    }
-
-    void sendFrame(const string& info) {
-        peerLink.write(packet::kissEncode(packet::encodeUi(peerCall, connectorCall, info)));
-    }
-
     void sendToConnector(const connector::Json& message) { mainLink.write(message.dump() + "\n"); }
 
     const Options& options;
@@ -2247,13 +1794,12 @@ private:
     std::filesystem::path workDir;
     bool brokenSetup = false;
     Child peer, connector;
-    os::TcpConnection peerLink, mainLink, peerAgw;
-    std::thread peerReader, mainReader, peerAgwReader;
+    os::TcpConnection mainLink, peerAgw;
+    std::thread mainReader, peerAgwReader;
     Inbox inbox;
     std::vector<connector::Json> lines;
-    std::vector<packet::Frame> frames;
     std::vector<agw::Frame> agwFrames;
-    size_t lineStart = 0, frameStart = 0, agwStart = 0;
+    size_t lineStart = 0, agwStart = 0;
 };
 
 int runAir(const Options& options) {
@@ -2275,9 +1821,6 @@ int runAir(const Options& options) {
         bool (AirTest::*run)();
     };
     const Step steps[] = {
-        {"Receives a message in two parts, acks it, and sends OK", &AirTest::receives},
-        {"Acks the parts it has when one is missing", &AirTest::missingPart},
-        {"Sends a long message and reports it delivered", &AirTest::sends},
         {"Connected: a session in, with a two-page reply", &AirTest::sessionPaging},
         {"Connected: two users at once, then both say bye", &AirTest::twoUsers},
         {"Connected: opens a session out and closes it with a 73", &AirTest::connectsOut},

@@ -28,13 +28,12 @@ struct Frame {
     std::string destination;
     std::vector<std::string> path;   // Digipeaters; "*" marks one that has repeated it
     std::string info;
-    bool ui = true;                  // false: an I frame (connected mode)
 };
 
 // Without the FCS. Callsigns must be normalized. path: digipeaters, at most 8
 Bytes encodeUi(const std::string& source, const std::string& destination, std::string_view info,
                const std::vector<std::string>& path = {});
-// UI and I frames only
+// UI frames, and the text of connected-mode I frames. nullopt for anything else
 std::optional<Frame> decode(const Bytes& frame);
 
 // Never splits a UTF-8 character

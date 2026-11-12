@@ -56,7 +56,7 @@ target_link_libraries(rtc_core PUBLIC Threads::Threads)
 
 # backend.cpp picks the OS code; each OS needs its own audio library
 if(WIN32)
-    # ws2_32: sockets, for direwolf's KISS port
+    # ws2_32: sockets, for direwolf's KISS and AGW ports and the main program
     target_link_libraries(rtc_core PUBLIC winmm ws2_32)
 elseif(APPLE)
     # PulseAudio (Homebrew's): the device list, and playing the tuning tone
@@ -200,6 +200,22 @@ if(WIN32 AND RTC_DIREWOLF)
     set(DIREWOLF_BUILD_DIR ${CMAKE_BINARY_DIR}/direwolf-build)
     set(DIREWOLF_PROGRAMS direwolf.exe atest.exe gen_packets.exe)
     list(TRANSFORM DIREWOLF_PROGRAMS PREPEND ${DIREWOLF_BUILD_DIR}/src/ OUTPUT_VARIABLE DIREWOLF_OUTPUTS)
+    # windres (for direwolf.rc) starts its preprocessor from its own folder and can't when
+    # that has a space in it, e.g. CLion's MinGW under C:\Program Files. So direwolf's build
+    # gets its short 8.3 path, when there is one
+    set(DIREWOLF_RC_ARGS "")
+    get_filename_component(MINGW_BIN_DIR ${CMAKE_C_COMPILER} DIRECTORY)
+    if(EXISTS ${MINGW_BIN_DIR}/windres.exe AND MINGW_BIN_DIR MATCHES " ")
+        file(WRITE ${CMAKE_BINARY_DIR}/short-path.bat "@echo %~s1\n")
+        # Not file(TO_NATIVE_PATH): with MinGW Makefiles it escapes the spaces
+        string(REPLACE "/" "\\" WINDRES_NATIVE "${MINGW_BIN_DIR}/windres.exe")
+        execute_process(COMMAND ${CMAKE_BINARY_DIR}/short-path.bat ${WINDRES_NATIVE}
+                OUTPUT_VARIABLE WINDRES_SHORT OUTPUT_STRIP_TRAILING_WHITESPACE)
+        file(TO_CMAKE_PATH "${WINDRES_SHORT}" WINDRES_SHORT)
+        if(EXISTS "${WINDRES_SHORT}" AND NOT WINDRES_SHORT MATCHES " ")
+            set(DIREWOLF_RC_ARGS -DCMAKE_RC_COMPILER=${WINDRES_SHORT})
+        endif()
+    endif()
     ExternalProject_Add(direwolf_windows
             SOURCE_DIR ${DIREWOLF_SOURCE_DIR}
             BINARY_DIR ${DIREWOLF_BUILD_DIR}
@@ -208,6 +224,7 @@ if(WIN32 AND RTC_DIREWOLF)
                 -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
                 -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
                 -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+                ${DIREWOLF_RC_ARGS}
                 -DHAMLIB_INCLUDE_DIR=${HAMLIB_INCLUDE_DIR}
                 -DHAMLIB_LIBRARY=${HAMLIB_DIR}/lib/gcc/libhamlib.dll.a
                 # The MinGW runtime goes inside the exes, so they only need Hamlib's DLLs

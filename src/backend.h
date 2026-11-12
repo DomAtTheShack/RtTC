@@ -117,7 +117,6 @@ std::vector<AudioDevice> listAudioDevices(AudioDirection direction);
 std::string playTone(const std::string& device, const std::vector<int16_t>& second, int rate,
                      const std::function<bool()>& keepGoing);
 
-
 // Serial ports
 
 std::vector<std::string> listSerialPorts();

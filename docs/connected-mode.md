@@ -1,17 +1,13 @@
 # Connected mode
 
-Status: **built**, and **on by default**
-(`connected.enabled`). Connected mode is the main way to reach the connector; `RC1` stays
-for now and will be removed ([below](#removing-rc1)). The suite is for VHF/UHF only, never
-HF.
+Connected mode is how people reach the connector, and it's on by default
+(`connected.enabled`). The suite is for VHF/UHF only, never HF.
 
-Connected mode lets an ordinary packet station (a TNC, a terminal program, an app) talk to
-the connector without our software: it types `connect N0CALL-7` and gets a session, like a
-packet BBS. The main program, e.g. an LLM chat, answers through the same JSON as `RC1`
-messages. It works both ways: the main program can also open a session to another station.
-
-`RC1` (UI frames, [connector-protocol.md](connector-protocol.md)) still works beside it
-on the same radio, until it's removed.
+An ordinary packet station (a TNC, a terminal program, an app) talks to the connector
+without our software: it types `connect N0CALL-7` and gets a session, like a packet BBS.
+The main program, e.g. an LLM chat, answers through JSON
+([connector-protocol.md](connector-protocol.md)). It works both ways: the main program can
+also open a session to another station.
 
 ```
  packet terminal ──AX.25 connected── direwolf ──AGW── connector ──JSON── main program
@@ -21,11 +17,13 @@ on the same radio, until it's removed.
 ## How it works
 
 direwolf runs the AX.25 link itself (connect, sequence numbers, acks, retries) and the
-connector drives it over direwolf's **AGW** port, next to the KISS port `RC1` uses. The
-connector only sees connects, disconnects and data. RadioConnectorCli doesn't change: it
-is the testing and debugging program and keeps raw KISS. Its packet screen shows the text
-of a session's `I` frames as well as UI frames, but not the control frames (`SABM`, `UA`,
-`RR`, `DISC`); `RadioConnector --verbose` logs every connect, disconnect and line of text.
+connector drives it over direwolf's **AGW** port. The connector only sees connects,
+disconnects and data; `RadioConnector --verbose` logs every one of them.
+
+RadioConnectorCli is the testing and debugging program. Its Duplex mode works with raw
+UI packets over direwolf's KISS port, and also shows the text of a session's `I` frames,
+but not the control frames (`SABM`, `UA`, `RR`, `DISC`). Its
+[Connected mode](#radioconnectorcli) is a connected-mode station of its own.
 
 | AGW | Used for |
 |---|---|
@@ -100,11 +98,10 @@ The full field list is in [json-format.md](json-format.md#connected-sessions). I
 | `session.close` | main → connector | `{"session":"s-3","text":"73!"}`: send `text` (optional), then disconnect. Reply `session.closing` |
 | `session.list` | main → connector | `{}`. Reply `sessions` |
 | `message.received` | connector → main | One line the user typed, with `session` |
-| `message.send` | main → connector | `{"session":"s-3","text":"..."}` instead of `to` |
+| `message.send` | main → connector | `{"session":"s-3","text":"..."}`. Reply `message.accepted` |
 | `message.status` | connector → main | For a session message: `queued`, `sending`, `paused`, then `received`, `skipped` or `failed` |
 
-A session message can't be confirmed `delivered`: AX.25 only says the other station's radio
-got it. Session messages don't need an `ack`.
+Text sent can't be confirmed read: AX.25 only says the other station's radio got it.
 
 ## Build order
 
@@ -112,28 +109,56 @@ got it. Session messages don't need an `ack`.
 2. ✅ Several sessions: turn-taking, paging, limits, idle timeout, busy reply.
 3. ✅ `RadioTests`: unit tests, and air tests with two users at once and a session opened
    from the connector.
-4. Later: a "Connect to…" chat screen in RadioConnectorCli.
+4. ✅ A connected-mode chat screen in RadioConnectorCli ([below](#radioconnectorcli)).
 
-## Removing RC1
+## RadioConnectorCli
 
-Connected mode replaces `RC1`, and `RC1`'s advantages over it (fewer turnarounds,
-riding out weak and fading paths) mostly matter on HF, which this suite won't use. Until
-it goes, `RC1` only gets fixes.
+**Settings > Mode > Connected** turns RadioConnectorCli into a connected-mode station, for
+testing by hand without the main program. It runs the same session code as RadioConnector
+(`src/Connector/sessions.*`, through direwolf's AGW port), playing the main program's part
+itself: what the main program would get as JSON is shown as plain text, and typed lines go
+out as `message.send`.
 
-1. **Now:** connected mode on by default; the main program uses sessions.
-2. **Test on real radios** with a few users: sessions, paging, busy and idle, links
-   through a digipeater. Tune `maxSessions`, `idleMinutes` and `pageBytes` from what's seen.
-3. **Remove `RC1` from RadioConnector:**
-   - `Engine` and the air format in `connector.cpp`/`connector.h`, and its unit tests
-   - `message.send` with `to`, `ack`, and the `RC1` fields of `message.status`,
-     `message.received` and `radio.status` (`txQueue`, `inFlight`, `heldForMain`)
-   - the `retry` and `holdForMainSeconds` config
-   - the connector's KISS link, and the `RC1` air tests
-   - `docs/rc1-test-messages.md`, and the `RC1` parts of `connector-protocol.md` and
-     `json-format.md`
-4. **Keep KISS everywhere else.** RadioConnectorCli is the testing and debugging program
-   and keeps raw KISS as it is: its Receive/Transmit/Duplex packet screen, CQ, and the
-   test tools all stay. `packet.cpp` (AX.25, KISS) stays for them and for RadioTests.
+Settings for it:
+
+| Setting | |
+|---|---|
+| **Connect to** | Who to connect to at the start, e.g. a RadioConnector's `N0CALL-1`. Empty = wait for calls. It's asked again each Start |
+| **Frequency** | Tuned over CAT (Settings > Radio (CAT)) at the start. Empty = leave the radio |
+
+While the screen is open, other stations can connect to this one's callsign (up to
+`max_sessions` in `settings.ini`, default 4). Sessions don't time out and aren't paged.
+Typed lines go to the session shown before the `>`. Commands:
+
+| Command | |
+|---|---|
+| `/c CALL [via D1,D2]` | Connect, through up to 2 digipeaters |
+| `/d [CALL]` | Disconnect (the current session if no `CALL`) |
+| `/s [CALL]` | List the sessions, or switch to `CALL`'s |
+| `/r [N] [SECS]` | Range test: `N` numbered lines (default 10), each `SECS` (default 5) after the last one's echo |
+| `/r stop` | Stop the range test |
+| `/h` | Help |
+
+Esc disconnects every session, then stops; Esc again stops now.
+
+- **To a RadioConnector**: type prompts and read the main program's replies. Long replies
+  stop at `[M]ore, [N]ew, [B]ye`; type `M`, `N` or `B`.
+- **To another RadioConnectorCli** in Connected mode: plain chat both ways. A line typed as
+  just `B`, `M` or `N` is read as the command it is to RadioConnector (`B` disconnects).
+- **Range test**: the far end must be RadioConnectorCli in Connected mode. It echoes each
+  `RANGE n/N` line back as `ECHO RANGE n/N`, and the sender shows each round trip and, at
+  the end, how many were sent, echoed and lost (no echo within 120 s), with the shortest,
+  longest and average round trip. AX.25 resends lost frames itself, so a weak path shows
+  up as longer round trips, and a path that's too weak as `link lost`.
+
+## Next
+
+Test on real radios with a few users: sessions, paging, busy and idle, links through a
+digipeater. Tune `maxSessions`, `idleMinutes` and `pageBytes` from what's seen.
+
+`RC1`, the earlier UI-frame protocol between connectors, was removed in favour of
+connected mode. RadioConnectorCli keeps raw KISS for testing: its Duplex packet screen,
+CQ, and the test tools. `packet.cpp` (AX.25, KISS) stays for them and for RadioTests.
 
 ## Decisions
 
@@ -144,6 +169,5 @@ it goes, `RC1` only gets fixes.
   the main program become `\r`.
 - At most one window (4 frames) per session waiting in direwolf.
 - Defaults: 4 sessions, 10 minutes idle, 1024-byte pages.
-- `RC1` only reads UI frames, so a connected user can't inject `RC1` frames by typing them.
 - Text for a session the connector is still opening waits in the connector: direwolf
   throws away data for a link it started until the other side answers.

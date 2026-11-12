@@ -28,15 +28,11 @@ enum class Color {
     BrightMagenta, BrightCyan, BrightWhite
 };
 
-// Styles can be combined: ansi::Bold | ansi::Underline
+// Styles can be combined: ansi::Bold | ansi::Inverse
 enum Style : unsigned {
-    None      = 0,
-    Bold      = 1 << 0,
-    Dim       = 1 << 1,
-    Italic    = 1 << 2,
-    Underline = 1 << 3,
-    Blink     = 1 << 4,
-    Inverse   = 1 << 5,
+    None    = 0,
+    Bold    = 1 << 0,
+    Inverse = 1 << 1,
 };
 
 inline Style operator|(Style a, Style b) {
@@ -55,7 +51,6 @@ inline bool& enabledFlag() {
 }
 
 inline bool enabled() { return enabledFlag(); }
-inline void setEnabled(bool on) { enabledFlag() = on; }
 
 // Writes a raw escape sequence only when escapes are enabled
 inline void esc(const char* seq) {
@@ -71,19 +66,9 @@ inline void setColor(Color fg, Color bg = Color::Default) {
     std::printf("\033[%d;%dm", static_cast<int>(fg), static_cast<int>(bg) + 10);
 }
 
-// 24-bit color, supported by most modern terminals (Windows Terminal included)
-inline void setRGB(int r, int g, int b) {
-    if (!enabled()) return;
-    std::printf("\033[38;2;%d;%d;%dm", r, g, b);
-}
-
 inline void setStyle(Style style) {
-    if (style & Bold)      esc("\033[1m");
-    if (style & Dim)       esc("\033[2m");
-    if (style & Italic)    esc("\033[3m");
-    if (style & Underline) esc("\033[4m");
-    if (style & Blink)     esc("\033[5m");
-    if (style & Inverse)   esc("\033[7m");
+    if (style & Bold)    esc("\033[1m");
+    if (style & Inverse) esc("\033[7m");
 }
 
 // Printing (printf-style)
@@ -115,12 +100,6 @@ inline void print(Color fg, Style style, const char* fmt, ...) {
 
 inline void clearScreen() { esc("\033[2J\033[H"); }  // Clear and move cursor to top-left
 inline void clearLine()   { esc("\033[2K\r"); }      // Clear current line, cursor to column 1
-inline void clearToEnd()  { esc("\033[0J"); }        // Clear from cursor to end of screen
-
-inline void moveTo(int row, int col) {               // 1-based coordinates
-    if (!enabled()) return;
-    std::printf("\033[%d;%dH", row, col);
-}
 
 inline void hideCursor() { esc("\033[?25l"); }
 inline void showCursor() { esc("\033[?25h"); }
@@ -326,7 +305,7 @@ int select(const std::string& title, const Container& options, int initial = 0,
                       [&](int i) { return std::begin(options)[i]; }, initial, subtitle);
 }
 
-// Inline list: ansi::select("Mode", {"Receive", "Transmit", "Duplex"})
+// Inline list: ansi::select("Reset all settings?", {"Reset", "Cancel"})
 inline int select(const std::string& title, std::initializer_list<const char*> options,
                   int initial = 0, const std::string& subtitle = "") {
     return selectWith(title, static_cast<int>(options.size()),

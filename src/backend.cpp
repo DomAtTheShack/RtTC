@@ -637,10 +637,6 @@ bool isFile(const std::wstring& path) {
     return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-} // namespace
-
-namespace {
-
 // Our folder first (the build puts a Hamlib-enabled direwolf there), then PATH, then
 // the usual install folders
 std::string findDirewolfTool(const std::string& name) {
