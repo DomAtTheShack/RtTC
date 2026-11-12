@@ -1,14 +1,14 @@
 name: Build
 
-# Pushes to master and PRs build all three platforms. Other branches build through their
-# PR, so a push to a PR's branch runs once, not twice; a branch without a PR builds with
-# "Run workflow". Nothing is published automatically: to publish the builds as the
-# "nightly" GitHub release (replacing the last one), use "Run workflow" and tick
-# "Publish the builds as the nightly release". Nothing is published unless all three pass.
+# PRs build and test all three platforms. Master isn't built on push: what's merged was
+# already built by its PR. Every night master is built and published as the "nightly"
+# GitHub release (replacing the last one), unless master hasn't changed since that one.
+# "Run workflow" builds any branch, and publishes it as the nightly if "Publish the builds
+# as the nightly release" is ticked. Nothing is published unless all three pass.
 on:
-  push:
-    branches: [master]
   pull_request:
+  schedule:
+    - cron: "0 7 * * *"          # 07:00 UTC, about 2-3 am US Eastern
   workflow_dispatch:
     inputs:
       release:
@@ -29,8 +29,32 @@ env:
   DIREWOLF_VERSION: "1.8.1"
 
 jobs:
+  # The nightly run skips everything when the last nightly is already this commit
+  check:
+    name: Anything to build
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          build=true
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            last=$(gh api "repos/$GH_REPO/commits/nightly" --jq .sha 2>/dev/null || true)
+            if [ "$last" = "${{ github.sha }}" ]; then
+              echo "The nightly release is already ${{ github.sha }}; nothing to do"
+              build=false
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
   windows:
     name: Windows x64
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: windows-latest
     defaults:
       run:
@@ -89,6 +113,8 @@ jobs:
 
   linux:
     name: Linux x64
+    needs: check
+    if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -161,6 +187,8 @@ jobs:
 
   macos:
     name: macOS (Apple Silicon)
+    needs: check
+    if: needs.check.outputs.build == 'true'
     # Pinned (Apple Silicon), not macos-latest: the build doesn't change when GitHub moves
     # the alias, and if this image's runners are backed up, try another version (macos-14)
     runs-on: macos-15
@@ -237,8 +265,8 @@ jobs:
   release:
     name: Publish nightly release
     needs: [windows, linux, macos]
-    # Only when started by hand with the box ticked
-    if: github.event_name == 'workflow_dispatch' && inputs.release
+    # Every night (when master changed), or when started by hand with the box ticked
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.release)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8

@@ -697,25 +697,16 @@ void usage(const char* program) {
                  program, connectorSettingsPath().c_str());
 }
 
-// The same callsign with another SSID (N0CALL -> N0CALL-1, N0CALL-15 -> N0CALL-1), so the
-// connector is a different station from RadioConnectorCli
-std::string otherSsid(const std::string& callsign) {
-    std::string call = packet::normalizeCallsign(callsign);
-    if (call.empty()) return callsign;
-    size_t dash = call.find('-');
-    int ssid = dash == std::string::npos ? 0 : std::atoi(call.c_str() + dash + 1);
-    return call.substr(0, dash) + "-" + std::to_string(ssid % 15 + 1);
-}
-
 // The first time, the connector's file starts as a copy of RadioConnectorCli's
-// settings (audio, PTT, baud), with its own callsign
+// settings (audio, PTT, baud), with its own callsign (the next SSID), so it's a
+// different station
 Settings loadConnectorSettings() {
     bool found = false;
     Settings settings = loadSettingsFrom(settingsFile, &found);
     if (found) return settings;
     settings = loadSettings();
     std::string shared = settings.callsign;
-    settings.callsign = otherSsid(shared);
+    settings.callsign = packet::otherSsid(shared);
     if (!saveSettingsTo(settings, settingsFile)) {
         std::fprintf(stderr, "Couldn't create %s\n", settingsFile.c_str());
         return settings;

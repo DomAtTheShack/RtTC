@@ -14,6 +14,24 @@ if(WIN32)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
+# CLion 2026.3's MinGW compiles for msvcrt, but its libwinpthread was built for UCRT, so
+# a -static link fails (undefined __intrinsic_setjmpex, __ms_vsnprintf). Linking against
+# UCRT fixes it. Only the link: its libstdc++ is built for msvcrt's headers. Off by
+# default since a consistent MinGW (MSYS2, CI) doesn't need it; on when this one is used
+set(RTC_MINGW_CRT_FLAG "")
+if(MINGW)
+    set(RTC_DEFAULT_UCRT_LINK OFF)
+    if(CMAKE_CXX_COMPILER MATCHES "JetBrains/CLion")
+        set(RTC_DEFAULT_UCRT_LINK ON)
+    endif()
+    option(RTC_UCRT_LINK "Link against UCRT (for MinGWs with a UCRT libwinpthread)"
+           ${RTC_DEFAULT_UCRT_LINK})
+    if(RTC_UCRT_LINK)
+        set(RTC_MINGW_CRT_FLAG -mcrtdll=ucrt)
+        add_link_options(${RTC_MINGW_CRT_FLAG})
+    endif()
+endif()
+
 # -DRTC_STATIC=ON (Linux and macOS) links the C++ runtime, Hamlib and libusb into the
 # programs. It needs a static Hamlib (libhamlib.a) that pkg-config can find. Windows
 # (MinGW) builds always link the runtime statically and use the bundled Hamlib DLLs
@@ -228,7 +246,7 @@ if(WIN32 AND RTC_DIREWOLF)
                 -DHAMLIB_INCLUDE_DIR=${HAMLIB_INCLUDE_DIR}
                 -DHAMLIB_LIBRARY=${HAMLIB_DIR}/lib/gcc/libhamlib.dll.a
                 # The MinGW runtime goes inside the exes, so they only need Hamlib's DLLs
-                -DCMAKE_EXE_LINKER_FLAGS=-static
+                "-DCMAKE_EXE_LINKER_FLAGS=-static ${RTC_MINGW_CRT_FLAG}"
             BUILD_COMMAND ${CMAKE_COMMAND} --build ${DIREWOLF_BUILD_DIR} --target direwolf atest gen_packets
             INSTALL_COMMAND ""
             BUILD_BYPRODUCTS ${DIREWOLF_OUTPUTS})

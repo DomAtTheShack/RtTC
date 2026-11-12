@@ -252,6 +252,11 @@ std::string settingsPath() {
     return (configDir() / "settings.ini").string();
 }
 
+std::string settingsPath(int copy) {
+    if (copy <= 1) return settingsPath();
+    return (configDir() / ("settings-" + std::to_string(copy) + ".ini")).string();
+}
+
 std::string connectorSettingsPath() {
     return (configDir() / "connector.ini").string();
 }

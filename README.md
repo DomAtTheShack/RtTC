@@ -53,6 +53,13 @@ an item's number.
 
 `RadioConnectorCli file.wav` decodes the packets in `file.wav`, then quits.
 
+Several copies can run at once, e.g. one per radio or sound card. Each one uses its own
+settings file: the first uses `settings.ini`, a second `settings-2.ini`, a third
+`settings-3.ini`, and so on. The menu shows which file it's using when it isn't
+`settings.ini`. A new file starts as a copy of `settings.ini` with a different SSID
+(N0CALL-2, N0CALL-3, ...; -1 is RadioConnector's), so each copy is a different station.
+`--settings FILE` picks the file instead.
+
 #### Sessions
 
 Set **Packet speed** and **Callsign**, then **Mode**:

@@ -90,6 +90,9 @@ Settings parseSettings(const std::string& text);
 // The first time, the files from the old folder (RTTY-Connector, rtty-connector on Linux)
 // are copied in
 std::string settingsPath();
+// More copies of RadioConnectorCli running at once: settings-2.ini, settings-3.ini, ... in
+// the same folder. 1 is settingsPath()
+std::string settingsPath(int copy);
 Settings loadSettings();
 bool saveSettings(const Settings& settings);
 

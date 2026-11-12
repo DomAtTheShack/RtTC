@@ -336,6 +336,28 @@ void testCallsigns() {
     CHECK(packet::normalizeCallsign("W1/AW").empty());
     CHECK(packet::normalizeCallsign("W1AW-").empty());
     CHECK(packet::normalizeCallsign("").empty());
+
+    // Other stations from one callsign: 1 the Radio Connector, 2+ more RadioConnectorClis
+    CHECK(packet::otherSsid("n0call") == "N0CALL-1");
+    CHECK(packet::otherSsid("N0CALL-15") == "N0CALL-1");
+    CHECK(packet::otherSsid("N0CALL", 2) == "N0CALL-2");
+    CHECK(packet::otherSsid("N0CALL-14", 2) == "N0CALL-1");
+    CHECK(packet::otherSsid("") == "");
+    CHECK(packet::otherSsid("bad/call") == "bad/call");
+}
+
+void testSettingsFiles() {
+    // Copies of RadioConnectorCli running at once each get their own file
+    CHECK(settingsPath(1) == settingsPath());
+    std::filesystem::path second = settingsPath(2);
+    CHECK(second.filename() == "settings-2.ini");
+    CHECK(second.parent_path() == std::filesystem::path(settingsPath()).parent_path());
+
+    // The lock that tells them apart: held until the process ends, so a second try fails
+    std::string lock = (std::filesystem::temp_directory_path() /
+                        ("radio-tests-" + std::to_string(std::random_device{}() % 1000000) + ".lock")).string();
+    CHECK(os::lockForLife(lock));
+    CHECK(!os::lockForLife(lock));
 }
 
 void testAx25Frames() {
@@ -1210,6 +1232,7 @@ int runUnit() {
         {"PTT settings", testPttSettings},
         {"AIOC cable", testAioc},
         {"Callsigns", testCallsigns},
+        {"Settings files for each running copy", testSettingsFiles},
         {"AX.25 frames", testAx25Frames},
         {"Splitting long text", testSplitInfo},
         {"KISS framing", testKiss},
