@@ -73,6 +73,7 @@ Json configToJson(const Settings& s) {
         {"callsign", s.callsign},
         {"packetBaud", s.packetBaud},
         {"fx25", fx25ToJson(s.fx25)},
+        {"txDelay", s.txDelayMs},
         {"path", s.path},
         {"rxAudio", s.rxAudio},
         {"txAudio", s.txAudio},
@@ -116,6 +117,10 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
             else if (value == 16 || value == 32 || value == 64 || value == "16" || value == "32" || value == "64")
                 s.fx25 = value.is_string() ? std::stoi(value.get<std::string>()) : value.get<int>();
             else return fail(key, "must be off, auto, 16, 32 or 64");
+        } else if (key == "txDelay") {
+            auto ms = intIn(value, 0, maxTxDelayMs);
+            if (!ms) return fail(key, "must be 0 to " + std::to_string(maxTxDelayMs) + " (milliseconds)");
+            s.txDelayMs = *ms;
         } else if (key == "path") {
             // AGW connects through at most 7
             if (!value.is_array() || value.size() > 7) return fail(key, "must be a list of up to 7 digipeaters");
@@ -268,7 +273,7 @@ ConfigChange applyConfig(Settings& settings, const Json& patch) {
     if (std::string problem = pttProblem(s); !problem.empty()) return fail("ptt", problem);
 
     change.restartRequired = s.callsign != settings.callsign || s.packetBaud != settings.packetBaud ||
-                             s.fx25 != settings.fx25 || s.rxAudio != settings.rxAudio ||
+                             s.fx25 != settings.fx25 || s.txDelayMs != settings.txDelayMs || s.rxAudio != settings.rxAudio ||
                              s.txAudio != settings.txAudio || s.catPort != settings.catPort ||
                              s.catBaud != settings.catBaud || s.rigModel != settings.rigModel ||
                              s.ptt != settings.ptt || s.pttPort != settings.pttPort ||

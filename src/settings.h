@@ -20,11 +20,16 @@ constexpr int defaultRigModel = 3087;
 // RIG_MODEL_NETRIGCTL: the user's own rigctld, with catPort = host:port
 constexpr int ownRigctldModel = 2;
 
+// direwolf's TXDELAY is in 10 ms steps, up to 255
+constexpr int maxTxDelayMs = 2550;
+
 struct Settings {
     Operation operation = Operation::Duplex;
     int packetBaud = 1200;     // 300, 1200 or 9600
     int fx25 = 1;              // FX.25 transmit: 0 off, 1 auto, 16/32/64 check bytes.
                                // Receiving always decodes FX.25
+    int txDelayMs = 500;       // direwolf's TXDELAY: flags sent after keying, before the
+                               // packet, while the radio comes up to power. 0 to 2550
     std::string callsign;
     std::string rxAudio;       // AudioDevice::name; empty = ask
     std::string txAudio;

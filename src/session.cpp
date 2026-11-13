@@ -286,8 +286,8 @@ using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 
 // direwolf doesn't say when a packet has gone out, so estimate it. Key-up covers the
-// channel wait and TXDELAY; tail covers TXTAIL and sound card buffering
-constexpr double keyUpSeconds = 1.0;
+// channel wait (TXDELAY is added per session); tail covers TXTAIL and sound card buffering
+constexpr double keyUpSeconds = 0.7;
 constexpr double tailSeconds  = 1.0;
 
 Clock::duration seconds(double s) {
@@ -543,7 +543,7 @@ bool runPacketSession(const PacketSession& p, bool& transmitted) {
                 packet::Bytes frame = packet::encodeUi(p.callsign, p.destination, piece);
                 if (!link.send(frame)) return false;
                 auto now = Clock::now();
-                Clock::time_point begins = busyUntil > now ? busyUntil : now + seconds(keyUpSeconds);
+                Clock::time_point begins = busyUntil > now ? busyUntil : now + seconds(keyUpSeconds + p.txDelayMs / 1000.0);
                 busyUntil = begins + seconds(packet::airtime(frame.size(), p.baud, p.fx25));
                 transmitted = true;
             }
