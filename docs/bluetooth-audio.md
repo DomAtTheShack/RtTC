@@ -37,15 +37,44 @@ PulseAudio plugin has to be installed (`libasound2-plugins` on Debian/Ubuntu,
 
 ### Windows
 
-Windows has no virtual sound cards of its own, so install a virtual cable, e.g. VB-Cable,
-plus a second one (VB-Cable A+B) for transmitting. Then in Settings:
+Windows has no virtual sound cards of its own, so the bridge and the modems talk through
+two virtual cables, one for each direction:
 
-| Setting | Example | What it is |
-| --- | --- | --- |
-| Radio audio into | CABLE Input | The bridge plays what the radio hears into this |
-| Rx sound card | CABLE Output | ...and the modems listen on its other end |
-| Tx sound card | CABLE-B Input | The modems play into this |
-| Transmit audio from | CABLE-B Output | ...and the bridge sends what it hears on the other end |
+```
+                  receive cable (CABLE)                         transmit cable (CABLE-B)
+radio --BT--> bridge --plays into--> CABLE Input   ==> CABLE Output   --> direwolf listens
+radio <--BT-- bridge <--records----- CABLE-B Output <== CABLE-B Input  <-- direwolf plays
+```
+
+1. **Install the cables.** [VB-Cable](https://vb-audio.com/Cable/) (free) gives
+   `CABLE Input` / `CABLE Output`. The second cable has to come from **VB-Cable A+B**
+   (`CABLE-A` and `CABLE-B`; use B), as the free one can't be installed twice. Restart
+   Windows afterwards.
+2. **Keep Windows off the cables.** In Sound settings, make sure no CABLE device is the
+   default playback or recording device (VB-Cable sometimes makes itself the default on
+   install). If `CABLE-B Input` were the default output, Windows sounds would go out on
+   the air. Leave "Listen to this device" off on the CABLE Outputs. Sample rates can stay
+   as they are: the bridge uses 32 kHz mono and Windows converts.
+3. **Pair the radio** in Windows' Bluetooth settings, and close HTCommander and phone apps.
+4. **In RadioConnectorCli, Settings:**
+
+   | Setting | Example | What it is |
+   | --- | --- | --- |
+   | Bluetooth radio | your radio | PTT changes to VOX |
+   | Radio audio into | CABLE Input | The bridge plays what the radio hears into this |
+   | Rx sound card | CABLE Output | ...and the modems listen on its other end |
+   | Tx sound card | CABLE-B Input | The modems play into this |
+   | Transmit audio from | CABLE-B Output | ...and the bridge sends what it hears on the other end |
+   | Transmit delay | 750 ms | Time for the radio to key up before the packet |
+
+   Each pair has to be the two ends of the same cable.
+
+   For RadioConnector, the same goes in its config: `bluetooth.address`,
+   `bluetooth.playAudio` (CABLE Input), `bluetooth.recordAudio` (CABLE-B Output), `rxAudio`
+   (CABLE Output), `txAudio` (CABLE-B Input) and `txDelay`. It won't start the radio until
+   all of them are set.
+5. **Try it safely:** the tuning tone into a dummy load or on a quiet simplex frequency,
+   listening on a second radio, then packets.
 
 Untested on a radio: the Bluetooth code follows HTCommander's, through Winsock instead of
 WinRT.
@@ -82,6 +111,9 @@ hidden.
   the tuning tone's own gaps. The first 250 ms are buffered before anything is sent, so a
   Bluetooth hiccup can't starve the radio part way through a packet. The 300 ms of quiet
   at the end goes out too, like a short TXTAIL.
+- The radio takes a moment to key up once audio arrives, which eats into direwolf's
+  **Transmit delay** (TXDELAY) flags. If the far end misses the start of packets, raise it
+  in Settings (or `txDelay` for RadioConnector), e.g. to 750 ms.
 - **Stopping** always ends any transmission with the end frame.
 
 ### Audio channel framing

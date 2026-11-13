@@ -137,7 +137,7 @@ On every connect (and reconnect) the connector sends, in this order:
 
 ```json
 {"v":1,"type":"hello","id":"c-hello","re":null,"body":{
-  "program":"radio-connector","version":"0.1.1","instance":"N0CALL-7",
+  "program":"radio-connector","version":"0.1.2","instance":"N0CALL-7",
   "capabilities":["ax25","fx25","connected"],"config":{},"radio":"ready"}}
 ```
 
@@ -367,6 +367,7 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
   "callsign": "N0CALL-7",
   "packetBaud": 1200,
   "fx25": "auto",
+  "txDelay": 500,
   "path": [],
   "rxAudio": "0",
   "txAudio": "0",
@@ -384,6 +385,7 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
 | `callsign` | string | `""` | A [callsign](#common-values). Required before the radio starts | yes |
 | `packetBaud` | integer | `1200` | `300`, `1200`, `9600` | yes |
 | `fx25` | string or integer | `"auto"` | `"off"`, `"auto"`, `16`, `32`, `64` (check bytes; `"16"` etc. also accepted). Sent back as `"off"`, `"auto"` or a number | yes |
+| `txDelay` | integer | `500` | 0 to 2550: milliseconds from keying up to the packet (direwolf's TXDELAY, rounded to 10 ms). Raise it if the start of packets gets cut off | yes |
 | `path` | string array | `[]` | Up to 7 digipeater callsigns, e.g. `["WIDE1-1"]`, for `session.open` | no |
 | `rxAudio` | string | `""` | Recording device `name` from `audio.devices`. Required, except with Bluetooth on Linux/macOS or `ptt.type` `aioc` | yes |
 | `txAudio` | string | `""` | Playback device `name`. Required, except with Bluetooth on Linux/macOS or `ptt.type` `aioc` | yes |
@@ -454,7 +456,7 @@ the line couldn't be read).
 `>` is the connector, `<` the main program.
 
 ```
-> {"v":1,"type":"hello","id":"c-hello","re":null,"body":{"program":"radio-connector","version":"0.1.1","instance":"N0CALL-7","capabilities":["ax25","fx25","connected"],"config":{...},"radio":"ready"}}
+> {"v":1,"type":"hello","id":"c-hello","re":null,"body":{"program":"radio-connector","version":"0.1.2","instance":"N0CALL-7","capabilities":["ax25","fx25","connected"],"config":{...},"radio":"ready"}}
 > {"v":1,"type":"radio.status","re":null,"body":{"state":"ready","direwolf":"running","ptt":"vox","sessions":0,"lastHeard":null,"error":null}}
 ```
 

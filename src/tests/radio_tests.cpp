@@ -147,6 +147,7 @@ void testSettingsRoundTrip() {
     s.txAudio = "default";
     s.catPort = "/dev/ttyACM0";
     s.catBaud = 115200;
+    s.txDelayMs = 750;
     s.txAudioDesc = "C:\\Users\\me\\My Recordings: = test";   // Spaces, colons and = survive
 
     Settings back = parseSettings(formatSettings(s));
@@ -157,6 +158,8 @@ void testSettingsRoundTrip() {
     CHECK(back.txAudio == "default");
     CHECK(back.catPort == "/dev/ttyACM0");
     CHECK(back.catBaud == 115200);
+    CHECK(back.txDelayMs == 750);
+    CHECK(parseSettings("tx_delay=9999\n").txDelayMs == 500);   // Out of range: the default
     CHECK(back.txAudioDesc == s.txAudioDesc);
 
     // RadioConnectorCli's connected mode: who to connect to and the frequency to tune to
@@ -449,6 +452,10 @@ void testDirewolfConfig() {
     CHECK(vox.find("ADEVICE plughw:1,0 default\n") != std::string::npos);
     CHECK(vox.find("MODEM 300 AB+\nFIX_BITS 1 AX25\n") != std::string::npos);
     CHECK(vox.find("MYCALL N0CALL-7\n") != std::string::npos);
+    CHECK(vox.find("TXDELAY 50\n") != std::string::npos);   // 500 ms, in 10 ms steps
+    s.txDelayMs = 1234;
+    CHECK(direwolfConfig(s, "1", "2", 7001).find("TXDELAY 123\n") != std::string::npos);
+    s.txDelayMs = 500;
     CHECK(vox.find("KISSPORT 0\nKISSPORT 7001\n") != std::string::npos);
     CHECK(vox.find("AGWPORT 0\n") != std::string::npos);
     CHECK(vox.find("PACLEN") == std::string::npos);
@@ -563,6 +570,7 @@ void testConnectorConfig() {
     Settings s;
     Json config = configToJson(s);
     CHECK(config["fx25"] == "auto");   // On by default
+    CHECK(config["txDelay"] == 500);
     CHECK(config["ptt"]["type"] == "vox");
     CHECK(!config.contains("retry") && !config.contains("holdForMainSeconds"));   // RC1's, gone
     CHECK(missingConfig(s) == "callsign");
@@ -578,6 +586,10 @@ void testConnectorConfig() {
     CHECK(!change.ok && change.field == "fx25");
     CHECK(s.callsign == "N0CALL-7");   // Nothing changes on an error
     CHECK(!applyConfig(s, {{"colour", "red"}}).ok);
+    CHECK(applyConfig(s, {{"txDelay", 3000}}).field == "txDelay");
+    CHECK(applyConfig(s, {{"txDelay", "500"}}).field == "txDelay");
+    change = applyConfig(s, {{"txDelay", 800}});
+    CHECK(change.ok && change.restartRequired && s.txDelayMs == 800);
     CHECK(config["radio"]["type"] == "none");
     CHECK(applyConfig(s, {{"radio", {{"type", "cat"}}}}).field == "radio.port");   // Needs a port
     CHECK(applyConfig(s, {{"ptt", {{"type", "cat"}}}}).field == "ptt");   // Needs radio control

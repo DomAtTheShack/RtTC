@@ -527,6 +527,7 @@ bool runDirewolf(const Settings& settings, const string& rxName, const string& t
     session.callsign = settings.callsign;
     session.destination = sendToAddress(settings);
     session.baud = settings.packetBaud;
+    session.txDelayMs = settings.txDelayMs;
     session.fx25 = settings.fx25;
     bool transmitted = false;
     bool ok = runPacketSession(session, transmitted);
@@ -855,6 +856,27 @@ void pickFx25(Settings& settings) {
     if (choice >= 0) settings.fx25 = modes[choice];
 }
 
+void pickTxDelay(Settings& settings) {
+    const int delays[] = {300, 500, 750, 1000, 1500, 2000};
+    const char* notes[] = {
+        "direwolf's default, for radios that key quickly",
+        "most handhelds",
+        "slow radios, Bluetooth radios",
+        "",
+        "",
+        "",
+    };
+    vector<string> labels;
+    int current = 1;   // A value from settings.ini that isn't listed starts on 500
+    for (int i = 0; i < 6; i++) {
+        labels.push_back(padded(std::to_string(delays[i]) + " ms", 10) + notes[i]);
+        if (delays[i] == settings.txDelayMs) current = i;
+    }
+    int choice = ansi::select("Transmit delay: from keying up to the packet", labels, current,
+                              "Raise it if the start of packets gets cut off");
+    if (choice >= 0) settings.txDelayMs = delays[choice];
+}
+
 string audioValue(const string& name, const string& desc) {
     if (name.empty()) return "(not set)";
     return desc.empty() ? name : desc + "  [" + name + "]";
@@ -890,6 +912,7 @@ void settingsMenu(Settings& settings) {
         }
         // For sending: direwolf decodes FX.25 whenever it hears it
         items.push_back({"FX.25", fx25Name(s.fx25), [&] { pickFx25(s); }});
+        items.push_back({"Transmit delay", std::to_string(s.txDelayMs) + " ms", [&] { pickTxDelay(s); }});
         if (bluetoothBuiltIn() || !s.bluetooth.empty())
             items.push_back({"Bluetooth radio", bluetoothDescription(s), [&] { pickBluetooth(s); }});
         // Bluetooth on Linux and macOS brings its own sound card. On Windows the modems use

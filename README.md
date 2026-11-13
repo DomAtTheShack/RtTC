@@ -84,6 +84,12 @@ so packets survive some bad bytes. Stations without FX.25 still decode them as p
 Receiving always decodes FX.25. Packets are shorter with it on (179 bytes of text, or 139
 with 64 check bytes), so long lines take more packets.
 
+**Transmit delay** (500 ms unless changed) is how long direwolf sends flags after keying
+up, before the packet, while the radio comes up to power (direwolf's TXDELAY). If the
+station at the other end misses the start of your packets, raise it: Bluetooth radios and
+VOX often need 750 ms or more. direwolf's config is written fresh at every start, so set
+it here, not in a `direwolf.conf`.
+
 ### RadioConnector
 
 `RadioConnector --main 127.0.0.1:9000` runs headless: it connects one radio (direwolf,

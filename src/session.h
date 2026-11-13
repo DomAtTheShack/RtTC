@@ -29,6 +29,7 @@ struct PacketSession {
     std::string destination = "CQ";          // Who typed packets are addressed to
     int baud = 1200;                        // For estimating airtime
     int fx25 = 0;                            // Settings::fx25: packet size and airtime
+    int txDelayMs = 500;                     // Settings::txDelayMs: airtime
     bool showReceived = true;                // false: only sending (Tab finishes)
     bool canType = false;
     std::string text;                        // Sent first
