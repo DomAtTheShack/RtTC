@@ -78,6 +78,7 @@ takes any subset of the fields ([json-format.md](json-format.md#config)):
   "packetBaud":1200,
   "fx25":"auto",
   "txDelay":500,
+  "turnaroundWait":300,
   "path":[],
   "rxAudio":"...", "txAudio":"...",
   "bluetooth":{"address":"", "playAudio":"", "recordAudio":""},
@@ -89,7 +90,7 @@ takes any subset of the fields ([json-format.md](json-format.md#config)):
 }
 ```
 
-Changing `callsign`, `packetBaud`, `fx25`, `txDelay`, the audio devices, `bluetooth`, `radio` or `ptt`
+Changing `callsign`, `packetBaud`, `fx25`, `txDelay`, `turnaroundWait`, the audio devices, `bluetooth`, `radio` or `ptt`
 restarts direwolf; the reply says so with `restartRequired: true`, and open sessions close.
 direwolf keys the radio itself; the connector never sets the frequency or mode.
 

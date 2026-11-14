@@ -90,6 +90,11 @@ station at the other end misses the start of your packets, raise it: Bluetooth r
 VOX often need 750 ms or more. direwolf's config is written fresh at every start, so set
 it here, not in a `direwolf.conf`.
 
+**Turnaround wait** (300 ms unless changed) is how long direwolf waits after the channel
+goes quiet before it transmits (direwolf's DWAIT), so the other station's radio has
+unkeyed and is back on receive. Raise it if your replies to a station keep getting lost,
+e.g. 500 ms when talking to a Bluetooth radio.
+
 ### RadioConnector
 
 `RadioConnector --main 127.0.0.1:9000` runs headless: it connects one radio (direwolf,

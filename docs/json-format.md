@@ -368,6 +368,7 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
   "packetBaud": 1200,
   "fx25": "auto",
   "txDelay": 500,
+  "turnaroundWait": 300,
   "path": [],
   "rxAudio": "0",
   "txAudio": "0",
@@ -386,6 +387,7 @@ every field; `config.set` takes any of them. Inside `bluetooth`, `radio`, `ptt` 
 | `packetBaud` | integer | `1200` | `300`, `1200`, `9600` | yes |
 | `fx25` | string or integer | `"auto"` | `"off"`, `"auto"`, `16`, `32`, `64` (check bytes; `"16"` etc. also accepted). Sent back as `"off"`, `"auto"` or a number | yes |
 | `txDelay` | integer | `500` | 0 to 2550: milliseconds from keying up to the packet (direwolf's TXDELAY, rounded to 10 ms). Raise it if the start of packets gets cut off | yes |
+| `turnaroundWait` | integer | `300` | 0 to 2550: milliseconds to wait after the channel goes quiet before transmitting, so the other radio is back on receive (direwolf's DWAIT, rounded to 10 ms) | yes |
 | `path` | string array | `[]` | Up to 7 digipeater callsigns, e.g. `["WIDE1-1"]`, for `session.open` | no |
 | `rxAudio` | string | `""` | Recording device `name` from `audio.devices`. Required, except with Bluetooth on Linux/macOS or `ptt.type` `aioc` | yes |
 | `txAudio` | string | `""` | Playback device `name`. Required, except with Bluetooth on Linux/macOS or `ptt.type` `aioc` | yes |
