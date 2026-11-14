@@ -164,6 +164,8 @@ std::string formatSettings(const Settings& s) {
     out << "bluetooth_name=" << s.bluetoothName << "\n";
     out << "bt_play_audio=" << s.btPlayAudio << "\n";
     out << "bt_record_audio=" << s.btRecordAudio << "\n";
+    out << "bt_rx_gain=" << s.btRxGain << "\n";
+    out << "bt_tx_gain=" << s.btTxGain << "\n";
     std::string path;
     for (const std::string& hop : s.path) path += (path.empty() ? "" : ",") + hop;
     out << "path=" << path << "\n";
@@ -224,6 +226,8 @@ Settings parseSettings(const std::string& text) {
         else if (key == "bluetooth_name") s.bluetoothName = value;
         else if (key == "bt_play_audio")  s.btPlayAudio = value;
         else if (key == "bt_record_audio") s.btRecordAudio = value;
+        else if (key == "bt_rx_gain")   toInt(value, minBtGain, maxBtRxGain, s.btRxGain);
+        else if (key == "bt_tx_gain")   toInt(value, minBtGain, maxBtTxGain, s.btTxGain);
         else if (key == "path") {
             s.path.clear();
             std::istringstream hops(value);

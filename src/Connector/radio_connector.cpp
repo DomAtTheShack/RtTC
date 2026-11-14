@@ -285,6 +285,9 @@ public:
                                   agwPort, connector::direwolfPaclen(settings));
             if (!out) return fail("couldn't write " + configPath.string());
         }
+        if (int others = os::countProcesses("direwolf"); others > 0)
+            logLine("warning: %d other direwolf%s already running. On the same radio, both answer every "
+                    "frame and keep resetting each other's links", others, others == 1 ? " is" : "s are");
         process = std::make_unique<os::Process>();
         if (!process->start(direwolfArgs(configName), true, false, configPath.parent_path().string())) {
             std::string why = process->error();

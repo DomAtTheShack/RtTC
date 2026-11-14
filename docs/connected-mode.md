@@ -137,7 +137,9 @@ Typed lines go to the session shown before the `>`. Commands:
 | `/s [CALL]` | List the sessions, or switch to `CALL`'s |
 | `/r [N] [SECS]` | Range test: `N` numbered lines (default 10), each `SECS` (default 5) after the last one's echo |
 | `/r stop` | Stop the range test |
-| `/l` | The link log: connects, disconnects and every problem below, with times |
+| `/l` | The link log: connects, disconnects, each frame's audio level and every problem below, with times |
+| `/rx [+\|-\|N]` | Bluetooth radio: receive gain in % (10-400, `+`/`-` step 10). Saved |
+| `/tx [+\|-\|N]` | Bluetooth radio: transmit gain in % (10-200). Saved |
 | `/h` | Help |
 
 Esc disconnects every session, then stops; Esc again stops now.
@@ -151,6 +153,23 @@ Esc disconnects every session, then stops; Esc again stops now.
   the end, how many were sent, echoed and lost (no echo within 120 s), with the shortest,
   longest and average round trip. AX.25 resends lost frames itself, so a weak path shows
   up as longer round trips, and a path that's too weak as `link lost`.
+
+**Audio levels**: before the prompt, `[CALL level 48 (14/12) ok]` is how loud the last
+frame from the station being talked to (or the last station heard) was here, as direwolf
+measures it. About 50 is best: green 30-70, yellow 20-29 or 71-90, red outside that. The
+numbers in brackets are the two tones' levels. When a station's level gets worse, a line
+says which way to turn what. The level here depends on the sender's transmit level and
+this station's receive level:
+
+- **Bluetooth radio**: `/rx` changes what this station hears, `/tx` what the other station
+  hears (watch their level for us on their screen). Both take effect at once and are saved
+  (`bt_rx_gain`, `bt_tx_gain` in `settings.ini`).
+- **Sound card** (e.g. an AIOC cable): the sound card's recording level (receive) and
+  playback level (transmit) in the computer's sound settings, and the radio's volume.
+
+**Another direwolf** already running when a session starts is asked about: on the same
+radio, both answer every frame and keep resetting each other's links. (RadioConnector logs
+a warning instead.)
 
 **Link problems** show as dim `! HH:MM:SS` lines where they happen, in any session, and
 `/l` lists them all. They're things that don't happen on a healthy link:
@@ -167,6 +186,10 @@ Esc disconnects every session, then stops; Esc again stops now.
 | CALL refused the connection / says the link isn't connected (DM) | |
 | CALL rejected a frame as invalid (FRMR) | A protocol error |
 | Disconnected (no answer / link lost / direwolf stopped), not delivered, no echo | Also marked `!` in `/l` |
+
+A poll after a minute or more of quiet is direwolf checking the link is still there (its
+T3 timer, every 5 minutes by default), not a problem: it goes in `/l` unmarked. Ours
+counts only with nothing of ours waiting.
 
 direwolf only reports frames it hears, not its own connected-mode ones, so our own resends
 show up through the other station's answers (the F bit) or as no answer at all.

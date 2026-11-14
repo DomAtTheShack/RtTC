@@ -24,6 +24,12 @@ constexpr int ownRigctldModel = 2;
 constexpr int maxTxDelayMs = 2550;
 constexpr int maxTurnaroundWaitMs = 2550;
 
+// Bluetooth gain limits, in percent. Transmit stops at 200: direwolf plays at half scale,
+// so more would clip the tones
+constexpr int minBtGain = 10;
+constexpr int maxBtRxGain = 400;
+constexpr int maxBtTxGain = 200;
+
 struct Settings {
     Operation operation = Operation::Duplex;
     int packetBaud = 1200;     // 300, 1200 or 9600
@@ -53,6 +59,11 @@ struct Settings {
     std::string bluetoothName;
     std::string btPlayAudio;
     std::string btRecordAudio;
+    // Bluetooth audio gain, in percent: what the radio hears, before the modems get it
+    // (btRxGain), and what the modems send, before the radio gets it (btTxGain). Set from
+    // the connected screen's /rx and /tx
+    int btRxGain = 100;
+    int btTxGain = 100;
 
     // Radio Connector only; RadioConnectorCli keeps them but doesn't use them
     std::vector<std::string> path;   // Digipeaters for session.open, e.g. WIDE1-1

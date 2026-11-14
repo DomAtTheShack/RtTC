@@ -1121,6 +1121,51 @@ void testLinkWatch() {
 
     watch.removePeer("N8GM");
     CHECK(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x29})).empty());
+
+    // Keep-alive polls on a quiet link (direwolf's T3) are notes, not problems
+    connector::LinkWatch idle("N8GM-1");
+    idle.setPeer("N8GM", true);
+    std::vector<string> notes;
+    auto rrPoll = lwFrame("N8GM-1", "N8GM", true, false, {0x01, 0x01});      // Their RR, P set
+    auto rrFinal = lwFrame("N8GM-1", "N8GM", false, true, {0x01, 0x01});     // Their RR answering, F set
+    CHECK(idle.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x01, 0x00}), t0, &notes).empty());
+    CHECK(lwSays(idle.heard(rrPoll, t0 + 5s, &notes), "got no answer from us"));   // Busy link: a resend
+    CHECK(notes.empty());
+    CHECK(idle.heard(rrPoll, t0 + 5min, &notes).empty());
+    CHECK(lwSays(notes, "checked the quiet link"));
+    notes.clear();
+    CHECK(idle.heard(rrFinal, t0 + 10min, &notes).empty());   // Our keep-alive, answered
+    CHECK(lwSays(notes, "Checked the quiet link to N8GM"));
+    notes.clear();
+    // Our poll after a quiet spell, with a frame of ours waiting: they missed it
+    CHECK(idle.outstanding("N8GM", 1, t0 + 15min).empty());
+    CHECK(lwSays(idle.heard(rrFinal, t0 + 15min + 5s, &notes), "No answer from N8GM in time"));
+    CHECK(notes.empty());
+}
+
+void testAudioLevels() {
+    auto heard = parseAudioLevel("N8GM-1 audio level = 48(14/12)   [NONE]   |||||||__");
+    CHECK(heard && heard->station == "N8GM-1" && heard->level == 48 && heard->mark == 14 && heard->space == 12);
+    heard = parseAudioLevel("Digipeater WIDE1-1 audio level = 72(20/18)   [NONE]   ||||||___");
+    CHECK(heard && heard->station == "WIDE1-1" && heard->level == 72);
+    heard = parseAudioLevel("WIDE2 (probably N0CALL) audio level = 9(3/2)   [NONE]   _________");
+    CHECK(heard && heard->station == "WIDE2" && heard->level == 9);
+    heard = parseAudioLevel("K1ABC-3 audio level = 101");   // 9600: one number
+    CHECK(heard && heard->level == 101 && heard->mark == -1 && heard->space == -1);
+    CHECK(!parseAudioLevel("[0.3] N8GM>N8GM-1:<I cmd, n(s)=0>hello"));
+    CHECK(!parseAudioLevel(" audio level = 50(1/1)"));
+    CHECK(rateLevel(50) == LevelRating::Good && rateLevel(30) == LevelRating::Good && rateLevel(70) == LevelRating::Good);
+    CHECK(rateLevel(25) == LevelRating::Fair && rateLevel(85) == LevelRating::Fair);
+    CHECK(rateLevel(12) == LevelRating::Bad && rateLevel(120) == LevelRating::Bad);
+    // The heard lines are on: no "h" after -q
+    auto args = direwolfArgs("x.conf");
+    CHECK(std::find(args.begin(), args.end(), "d") != args.end());
+    CHECK(std::find(args.begin(), args.end(), "hd") == args.end());
+}
+
+void testCountProcesses() {
+    CHECK(os::countProcesses("RadioTests") >= 1);   // This one
+    CHECK(os::countProcesses("no-such-program-rtc") == 0);
 }
 
 void testBtAddresses() {
@@ -1295,6 +1340,13 @@ void testBtSettings() {
     CHECK(back.bluetooth == s.bluetooth && back.bluetoothName == s.bluetoothName);
     CHECK(back.btPlayAudio == "3" && back.btRecordAudio == "4");
     CHECK(s.usesBluetooth());
+    CHECK(back.btRxGain == 100 && back.btTxGain == 100);
+    s.btRxGain = 250;
+    s.btTxGain = 60;
+    back = parseSettings(formatSettings(s));
+    CHECK(back.btRxGain == 250 && back.btTxGain == 60);
+    CHECK(parseSettings("bt_tx_gain=300\n").btTxGain == 100);   // Over 200: the default
+    CHECK(parseSettings("bt_rx_gain=5\n").btRxGain == 100);     // Under 10: the default
 
     // Sound keys the radio, so VOX only
     s.catPort = "/dev/ttyUSB0";
@@ -1359,6 +1411,8 @@ int runUnit() {
         {"Connected session out, close and no answer", testSessionOutgoing},
         {"Connected sessions when the radio stops", testSessionRadioDown},
         {"Connected link watch", testLinkWatch},
+        {"direwolf audio levels", testAudioLevels},
+        {"Counting running programs", testCountProcesses},
         {"Bluetooth addresses and UUIDs", testBtAddresses},
         {"Bluetooth audio framing", testBtAudioFraming},
         {"Bluetooth GAIA control frames", testBtGaia},

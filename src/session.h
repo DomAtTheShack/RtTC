@@ -53,6 +53,12 @@ struct ConnectedSession {
     std::string connectTo;     // Connected to at the start. Empty = wait for calls
     int fx25 = 0;              // Settings::fx25: text per frame
     int maxSessions = 4;
+    // A Bluetooth radio: its gain (Settings::btRxGain, btTxGain), and setGain, which applies
+    // new values at once and saves them (/rx and /tx)
+    bool bluetooth = false;
+    int btRxGain = 100;
+    int btTxGain = 100;
+    std::function<void(int rxPercent, int txPercent)> setGain;
 };
 
 // Esc disconnects every session, then stops; Esc again stops now. transmitted is set if

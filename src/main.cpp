@@ -190,7 +190,10 @@ public:
             ansi::print(dimColor, "%s\n", line.c_str());
             ansi::flush();
         };
-        if (bridge.start(settings.bluetooth, settings.btPlayAudio, settings.btRecordAudio, say)) return true;
+        if (bridge.start(settings.bluetooth, settings.btPlayAudio, settings.btRecordAudio, say)) {
+            setGain(settings.btRxGain, settings.btTxGain);
+            return true;
+        }
         showMessage("Bluetooth audio didn't start", bridge.error() +
                     "\n\nCheck the radio is on, paired and in range, and that nothing else (e.g. "
                     "HTCommander or a phone app) is connected to it.");
@@ -199,6 +202,16 @@ public:
         (void)settings;
         showMessage("No Bluetooth", "This build has no Bluetooth audio. Turn it off in Settings.");
         return false;
+#endif
+    }
+
+    // Percent, on what the radio hears and what the modems send
+    void setGain(int rxPercent, int txPercent) {
+#ifdef RTC_BLUETOOTH
+        bridge.setGain(rxPercent, txPercent);
+#else
+        (void)rxPercent;
+        (void)txPercent;
 #endif
     }
 
@@ -536,7 +549,8 @@ bool runDirewolf(const Settings& settings, const string& rxName, const string& t
 }
 
 // Connected mode: direwolf with an AGW port, and the chat screen
-bool runConnectedDirewolf(const Settings& settings, const string& rxName, const string& txName) {
+bool runConnectedDirewolf(Settings& settings, const string& rxName, const string& txName,
+                          BluetoothSession& bluetooth) {
     int agwPort = os::freeTcpPort();
     if (agwPort == 0) {
         ansi::print(failColor, "No free TCP port for direwolf.\n");
@@ -553,6 +567,17 @@ bool runConnectedDirewolf(const Settings& settings, const string& rxName, const 
     session.connectTo = settings.sendTo;
     session.fx25 = settings.fx25;
     session.maxSessions = settings.maxSessions;
+    if (settings.usesBluetooth()) {
+        session.bluetooth = true;
+        session.btRxGain = settings.btRxGain;
+        session.btTxGain = settings.btTxGain;
+        session.setGain = [&](int rx, int tx) {
+            bluetooth.setGain(rx, tx);
+            settings.btRxGain = rx;
+            settings.btTxGain = tx;
+            save(settings);
+        };
+    }
     bool transmitted = false;
     bool ok = runConnectedSession(session, transmitted);
     return afterDirewolf(settings, config, transmitted, ok);
@@ -615,6 +640,19 @@ bool radioAudio(Settings& settings, BluetoothSession& bluetooth, string& rxName,
     return true;
 }
 
+// Another direwolf on the same radio answers every frame too, and the two keep resetting
+// each other's links. It's only asked about: another copy of this program on another radio
+// is fine. false on Back or Esc
+bool noOtherDirewolf() {
+    int running = os::countProcesses("direwolf");
+    if (running <= 0) return true;
+    string title = running == 1 ? "Another direwolf is already running"
+                                : std::to_string(running) + " other direwolfs are already running";
+    int choice = ansi::select(title, {"Back (close it first)", "Start anyway (it's on a different radio)"}, 0,
+                              "On the same radio both answer every frame and keep resetting the links");
+    return choice == 1;
+}
+
 // false on Esc
 bool haveCallsign(Settings& settings) {
     if (!settings.callsign.empty()) return true;
@@ -630,6 +668,7 @@ void startConnectedSession(Settings& settings) {
         return;
     }
     save(settings);
+    if (!noOtherDirewolf()) return;
     if (!tuneRadio(settings)) return;
     BluetoothSession bluetooth;
     string rxName, txName;
@@ -638,14 +677,14 @@ void startConnectedSession(Settings& settings) {
     printSessionHeader(settings, true);
     if (settings.frequency > 0)
         ansi::print(infoColor, "Frequency: %s\n", frequencyDescription(settings.frequency).c_str());
-    if (!runConnectedDirewolf(settings, rxName, txName))
+    if (!runConnectedDirewolf(settings, rxName, txName, bluetooth))
         ansi::print(failColor, "\nStopped with an error.\n");
     ansi::waitKey();
 }
 
 // Duplex: UI packets sent and heard, chat style
 void startPacketSession(Settings& settings) {
-    if (!haveCallsign(settings)) return;
+    if (!haveCallsign(settings) || !noOtherDirewolf()) return;
     BluetoothSession bluetooth;
     string rxName, txName;
     if (!radioAudio(settings, bluetooth, rxName, txName)) return;

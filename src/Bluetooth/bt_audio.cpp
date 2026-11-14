@@ -1,11 +1,25 @@
 #include "bt_audio.h"
 
+#include <algorithm>
 #include <chrono>
 #include <vector>
 
 #include "bt_protocol.h"
 
 namespace bt {
+
+namespace {
+
+// Scales samples by percent, clipping at full scale. 100 leaves them alone
+void applyGain(int16_t* samples, size_t count, int percent) {
+    if (percent == 100) return;
+    for (size_t i = 0; i < count; i++) {
+        long scaled = static_cast<long>(samples[i]) * percent / 100;
+        samples[i] = static_cast<int16_t>(std::clamp(scaled, -32768L, 32767L));
+    }
+}
+
+} // namespace
 
 BluetoothAudio::~BluetoothAudio() { stop(); }
 
@@ -95,6 +109,7 @@ void BluetoothAudio::receiveLoop() {
         for (const AudioFrame& frame : deframer.feed(buf, static_cast<size_t>(n))) {
             if (frame.command == audioData || frame.command == audioDataAlt) {
                 std::vector<int16_t> pcm = decoder.decode(frame.payload.data(), frame.payload.size());
+                applyGain(pcm.data(), pcm.size(), rxGain);
                 if (!pcm.empty()) audio->play(pcm.data(), pcm.size());
             } else if (frame.command == audioEnd) {
                 decoder.reset();   // The next transmission starts afresh
@@ -119,7 +134,11 @@ void BluetoothAudio::transmitLoop() {
             say("Can't send audio to the radio: " + radioAudio.error());
         }
     };
-    while (audio->record(chunk.data(), chunk.size())) send(transmitter.feed(chunk.data(), chunk.size()));
+    while (audio->record(chunk.data(), chunk.size())) {
+        // Before keying decides: at the 10% least, direwolf's tones stay far above its threshold
+        applyGain(chunk.data(), chunk.size(), txGain);
+        send(transmitter.feed(chunk.data(), chunk.size()));
+    }
     send(transmitter.finish());   // Never leave the radio keyed
 }
 
