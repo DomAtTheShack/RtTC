@@ -518,6 +518,13 @@ bool isTerminal(FILE* stream) {
     return _isatty(_fileno(stream)) != 0;
 }
 
+int terminalColumns() {
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) return 80;
+    int columns = info.srWindow.Right - info.srWindow.Left + 1;
+    return columns > 0 ? columns : 80;
+}
+
 void setRawMode(bool enable) {
     static DWORD oldMode;
     static bool active = false;
@@ -1212,6 +1219,12 @@ bool lockForLife(const std::string& path) {
 
 bool isTerminal(FILE* stream) {
     return isatty(fileno(stream)) != 0;
+}
+
+int terminalColumns() {
+    winsize size{};
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) return 80;
+    return size.ws_col;
 }
 
 void setRawMode(bool enable) {

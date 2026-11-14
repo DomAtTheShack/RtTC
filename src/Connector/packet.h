@@ -34,6 +34,17 @@ struct Frame {
     std::string info;
 };
 
+// Any frame's addresses, for looking at connected-mode frames. Without the FCS
+struct Header {
+    std::string source;
+    std::string destination;
+    bool command = false;    // AX.25 2.0 command/response bits; neither for older frames
+    bool response = false;
+    bool repeated = true;    // Every digipeater in the path has repeated it
+    size_t controlAt = 0;    // The control byte's index; there's at least one byte there
+};
+std::optional<Header> decodeHeader(const Bytes& frame);
+
 // Without the FCS. Callsigns must be normalized. path: digipeaters, at most 8
 Bytes encodeUi(const std::string& source, const std::string& destination, std::string_view info,
                const std::vector<std::string>& path = {});

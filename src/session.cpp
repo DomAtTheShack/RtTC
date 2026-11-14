@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <deque>
 #include <exception>
 #include <map>
@@ -21,6 +22,7 @@
 #include "ansi.hpp"
 #include "backend.h"
 #include "Connector/agw.h"
+#include "Connector/link_watch.h"
 #include "Connector/packet.h"
 #include "Connector/sessions.h"
 
@@ -376,15 +378,18 @@ public:
 
     void add(char ch) {
         line += ch;
+        if (typing && !isContinuationByte(ch)) shownChars++;
         ansi::print(sentColor, "%c", ch);
         ansi::flush();
     }
 
     void backspace() {
         if (line.empty()) return;
-        line.pop_back();
-        std::fputs("\b \b", stdout);
-        ansi::flush();
+        // A whole UTF-8 character. Redrawn, as "\b" can't go back up onto a wrapped row
+        clear();
+        while (!line.empty() && isContinuationByte(line.back())) line.pop_back();
+        if (!line.empty()) line.pop_back();
+        redraw();
     }
 
     // Takes the typed line, leaving the prompt empty
@@ -405,18 +410,42 @@ public:
     bool empty() const { return line.empty(); }
 
 private:
+    static bool isContinuationByte(char ch) { return (static_cast<unsigned char>(ch) & 0xC0) == 0x80; }
+
+    static int countChars(const std::string& text) {
+        int n = 0;
+        for (char ch : text)
+            if (!isContinuationByte(ch)) n++;
+        return n;
+    }
+
+    // Erases the prompt and typed line, every row they wrap onto, leaving the cursor at
+    // the start of the first. A full last row leaves the cursor on it (terminals wrap
+    // only when the next character comes)
     void clear() {
-        if (typing) ansi::clearLine();
+        if (!typing) return;
+        int columns = os::terminalColumns();
+        int rowsAbove = shownChars > 0 ? (shownChars - 1) / columns : 0;
+        if (rowsAbove > 0) {
+            std::string up = "\033[" + std::to_string(rowsAbove) + "A";
+            ansi::esc(up.c_str());
+        }
+        ansi::esc("\r\033[J");   // Start of the row, then clear to the end of the screen
+        shownChars = 0;
     }
 
     void redraw() {
-        if (typing) ansi::print(sentColor, "%s%s", prompt.c_str(), line.c_str());
+        if (typing) {
+            ansi::print(sentColor, "%s%s", prompt.c_str(), line.c_str());
+            shownChars = countChars(prompt) + countChars(line);
+        }
         ansi::flush();
     }
 
     bool typing;
     std::string prompt = "> ";
     std::string line;
+    int shownChars = 0;   // Characters of prompt and line on screen, for clear()
 };
 
 // direwolf for one session: its output is kept, and shown only if it fails
@@ -694,6 +723,13 @@ std::string lower(std::string text) {
     return text;
 }
 
+std::string clockTime() {
+    std::time_t t = std::time(nullptr);
+    char buffer[16];
+    std::strftime(buffer, sizeof buffer, "%H:%M:%S", std::localtime(&t));
+    return buffer;
+}
+
 std::string secondsText(double s) {
     char buffer[32];
     std::snprintf(buffer, sizeof buffer, "%.1f s", s);
@@ -731,6 +767,8 @@ public:
         o.pageBytes = 0;     // Typed lines are short; paging is the Radio Connector's
         o.chunkBytes = connector::connectedChunkBytes(p.fx25, maxVia);
         own = o.callsign;
+        watch = connector::LinkWatch(own);
+        toDirewolf(agw::rawFrames());   // Every frame heard, for the link watch
         sessions.setOptions(o, now);
         sessions.setLinkUp(true, now);
         // Calls are accepted while this screen is open, as with a main program connected
@@ -754,6 +792,14 @@ public:
     }
 
     void onAgw(const agw::Frame& frame, connector::TimePoint now) {
+        if (frame.kind == 'K' && !frame.data.empty()) {
+            packet::Bytes bytes(frame.data.begin() + 1, frame.data.end());   // After the port byte
+            for (const std::string& problem : watch.heard(bytes)) report(problem);
+        } else if (frame.kind == 'Y') {
+            int count = static_cast<int>(agw::outstandingCount(frame));
+            for (const std::string& problem : watch.outstanding(packet::normalizeCallsign(frame.to), count, now))
+                report(problem);
+        }
         sessions.onAgw(frame, now);
         updatePrompt();
     }
@@ -794,6 +840,20 @@ private:
         std::vector<double> trips;
     };
 
+    // Something that shouldn't happen on a healthy link: shown, and kept for /log
+    void report(const std::string& text) {
+        std::string time = clockTime();
+        remember(time, "! " + text);
+        screen.note(noteColor, "  ! " + time + " " + text);
+    }
+
+    // For /log only (what's shown already says it)
+    void remember(const std::string& time, const std::string& text) {
+        log.push_back(time + "  " + text);
+        if (log.size() > maxLog) log.pop_front();
+    }
+    void remember(const std::string& text) { remember(clockTime(), text); }
+
     bool toDirewolf(const agw::Frame& frame) {
         if (!link.send(frame)) linkFailed = true;
         return !linkFailed;
@@ -814,6 +874,8 @@ private:
         if (type == "session.opening") {
             peers[id] = {call, false, false};
             if (active.empty()) active = id;
+            watch.setPeer(call, false);
+            remember("Connecting to " + call);
             screen.note(noteColor, "Connecting to " + call + "...");
         } else if (type == "session.opened") {
             Peer& peer = peers[id];
@@ -821,12 +883,19 @@ private:
             peer.incoming = body.value("direction", "") == "in";
             peer.open = true;
             if (active.empty()) active = id;
+            watch.setPeer(call, true);
             std::string text = peer.incoming ? call + " connected" : "Connected to " + call;
+            remember(text);
             if (active != id) text += ". /s " + call + " to talk to them";
             screen.note(goodColor, text);
         } else if (type == "session.closed") {
-            screen.note(statusColor, "Disconnected from " + call + " (" +
-                        closeReason(body.value("reason", "")) + ")");
+            std::string reason = body.value("reason", "");
+            std::string text = "Disconnected from " + call + " (" + closeReason(reason) + ")";
+            // Not asked for by either side: the link failed
+            bool failed = reason == "no_answer" || reason == "link_lost" || reason == "radio_down";
+            remember((failed ? "! " : "") + text);
+            screen.note(statusColor, text);
+            watch.removePeer(call);
             if (range.running && range.session == id) finishRange("ended, the link closed");
             peers.erase(id);
             if (active == id) {
@@ -844,6 +913,7 @@ private:
                 std::string text = "Not delivered to " + body.value("to", "");
                 if (body.contains("reason") && body["reason"].is_string())
                     text += " (" + body["reason"].get<std::string>() + ")";
+                remember("! " + text);
                 screen.note(errorColor, text);
             }
         } else if (type == "error") {
@@ -932,6 +1002,14 @@ private:
             if (count < 1 || count > 1000 || gap < 0 || gap > 3600)
                 return screen.note(statusColor, "/r [lines 1-1000] [seconds 0-3600], or /r stop");
             startRange(count, gap, now);
+        } else if (name == "l" || name == "log") {
+            if (log.empty()) return screen.note(noteColor, "Nothing logged yet");
+            int problems = 0;
+            for (const std::string& line : log)
+                if (line.find("  ! ") != std::string::npos) problems++;
+            screen.note(noteColor, "Link log, " + std::to_string(problems) +
+                                       (problems == 1 ? " problem" : " problems") + " (marked !):");
+            for (const std::string& line : log) screen.note(noteColor, "  " + line);
         } else if (name == "h" || name == "help" || name == "?") {
             const char* help[] = {
                 "Typed lines go to the session shown before the >.",
@@ -941,6 +1019,8 @@ private:
                 "/r [N] [SECS]        range test: N numbered lines (10), each SECS (5) after the last",
                 "                     one's echo. The far end must be RadioConnectorCli in Connected mode",
                 "/r stop              stop the range test",
+                "/l                   the link log: connects, disconnects and anything that went",
+                "                     wrong (resends, no answers, missed frames), marked !",
                 "Esc                  disconnect everything and stop. Esc again stops now",
                 "To a Radio Connector: after a long reply type M (more), N (new chat) or B (bye)",
             };
@@ -966,8 +1046,10 @@ private:
     void tickRange(connector::TimePoint now) {
         if (!range.running) return;
         if (range.waiting && now - range.sentAt >= echoLimit) {
-            screen.note(statusColor, "Range " + std::to_string(range.waiting) + ": no echo after " +
-                        secondsText(std::chrono::duration<double>(echoLimit).count()));
+            std::string text = "Range " + std::to_string(range.waiting) + ": no echo after " +
+                               secondsText(std::chrono::duration<double>(echoLimit).count());
+            remember("! " + text);
+            screen.note(statusColor, text);
             range.lost++;
             range.waiting = 0;
             range.nextAt = now;
@@ -1019,6 +1101,9 @@ private:
     std::string active;                  // Where typed lines go
     Range range;
     bool linkFailed = false;
+    static constexpr size_t maxLog = 500;
+    std::deque<std::string> log;         // For /log: "HH:MM:SS  text", problems as "! text"
+    connector::LinkWatch watch{""};
     connector::Sessions sessions;        // Last: its hooks use the members above
 };
 

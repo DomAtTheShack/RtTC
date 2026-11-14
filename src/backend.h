@@ -135,6 +135,8 @@ bool lockForLife(const std::string& path);
 // Terminal
 
 bool isTerminal(FILE* stream);
+// The terminal window's width in characters; 80 if it can't tell
+int terminalColumns();
 // Keys one at a time, no echo
 void setRawMode(bool enable);
 // false: Ctrl-C arrives as byte 3. setRawMode(false) turns it back on

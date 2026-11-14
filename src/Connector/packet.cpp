@@ -110,6 +110,27 @@ Bytes encodeUi(const std::string& source, const std::string& destination, std::s
     return frame;
 }
 
+std::optional<Header> decodeHeader(const Bytes& frame) {
+    size_t addresses = 0;
+    while (true) {
+        size_t at = addresses * addressBytes;
+        if (at + addressBytes > frame.size() || addresses >= maxAddresses) return std::nullopt;
+        addresses++;
+        if (frame[at + addressBytes - 1] & 1) break;
+    }
+    if (addresses < 2 || addresses * addressBytes >= frame.size()) return std::nullopt;
+    Header out;
+    out.destination = readAddress(&frame[0]);
+    out.source = readAddress(&frame[addressBytes]);
+    bool destinationBit = frame[addressBytes - 1] & 0x80, sourceBit = frame[2 * addressBytes - 1] & 0x80;
+    out.command = destinationBit && !sourceBit;
+    out.response = !destinationBit && sourceBit;
+    for (size_t i = 2; i < addresses; i++)
+        if (!(frame[i * addressBytes + addressBytes - 1] & 0x80)) out.repeated = false;
+    out.controlAt = addresses * addressBytes;
+    return out;
+}
+
 std::optional<Frame> decode(const Bytes& frame) {
     // The last address has its lowest bit set
     size_t addresses = 0;

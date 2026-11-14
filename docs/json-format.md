@@ -137,7 +137,7 @@ On every connect (and reconnect) the connector sends, in this order:
 
 ```json
 {"v":1,"type":"hello","id":"c-hello","re":null,"body":{
-  "program":"radio-connector","version":"0.1.2","instance":"N0CALL-7",
+  "program":"radio-connector","version":"0.1.3","instance":"N0CALL-7",
   "capabilities":["ax25","fx25","connected"],"config":{},"radio":"ready"}}
 ```
 
@@ -458,7 +458,7 @@ the line couldn't be read).
 `>` is the connector, `<` the main program.
 
 ```
-> {"v":1,"type":"hello","id":"c-hello","re":null,"body":{"program":"radio-connector","version":"0.1.2","instance":"N0CALL-7","capabilities":["ax25","fx25","connected"],"config":{...},"radio":"ready"}}
+> {"v":1,"type":"hello","id":"c-hello","re":null,"body":{"program":"radio-connector","version":"0.1.3","instance":"N0CALL-7","capabilities":["ax25","fx25","connected"],"config":{...},"radio":"ready"}}
 > {"v":1,"type":"radio.status","re":null,"body":{"state":"ready","direwolf":"running","ptt":"vox","sessions":0,"lastHeard":null,"error":null}}
 ```
 

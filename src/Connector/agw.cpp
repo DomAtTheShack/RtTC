@@ -85,6 +85,8 @@ std::vector<Frame> Decoder::feed(std::string_view bytes) {
 
 Frame registerCall(const std::string& call) { return make('X', call, ""); }
 
+Frame rawFrames() { return make('k', "", ""); }
+
 Frame unregisterCall(const std::string& call) { return make('x', call, ""); }
 
 Frame connect(const std::string& own, const std::string& peer, const std::vector<std::string>& via) {
