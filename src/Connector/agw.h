@@ -43,6 +43,8 @@ Frame connect(const std::string& own, const std::string& peer, const std::vector
 Frame data(const std::string& own, const std::string& peer, std::string_view text);
 Frame disconnect(const std::string& own, const std::string& peer);
 Frame outstanding(const std::string& own, const std::string& peer);
+// 'k': direwolf then sends every frame it hears as 'K', a port byte then the frame (no FCS)
+Frame rawFrames();
 
 // The count in a 'Y' reply, or -1
 long outstandingCount(const Frame& frame);

@@ -39,6 +39,7 @@
 #include "../Connector/agw.h"
 #include "../Connector/connector.h"
 #include "../Connector/connector_config.h"
+#include "../Connector/link_watch.h"
 #include "../Radio/aioc.h"
 #include "../Radio/cat.h"
 #include "../Radio/fsk.h"
@@ -1029,6 +1030,91 @@ void testSessionRadioDown() {
 
 // Bluetooth audio (protocol only; no radio needed)
 
+// A frame for LinkWatch, byte by byte. bits: the destination's and source's C bits
+// (command: 1, 0; response: 0, 1). via: digipeaters and whether each has repeated it
+packet::Bytes lwFrame(const std::string& to, const std::string& from, bool destinationBit, bool sourceBit,
+                      std::vector<uint8_t> control, const std::string& info = "",
+                      const std::vector<std::pair<std::string, bool>>& via = {}) {
+    packet::Bytes out;
+    auto address = [&](const std::string& call, bool topBit, bool last) {
+        size_t dash = call.find('-');
+        std::string base = call.substr(0, dash);
+        int ssid = dash == std::string::npos ? 0 : std::atoi(call.c_str() + dash + 1);
+        for (size_t i = 0; i < 6; i++) out.push_back(static_cast<uint8_t>((i < base.size() ? base[i] : ' ') << 1));
+        out.push_back(static_cast<uint8_t>((topBit ? 0x80 : 0) | 0x60 | (ssid << 1) | (last ? 1 : 0)));
+    };
+    address(to, destinationBit, false);
+    address(from, sourceBit, via.empty());
+    for (size_t i = 0; i < via.size(); i++) address(via[i].first, via[i].second, i + 1 == via.size());
+    out.insert(out.end(), control.begin(), control.end());
+    out.insert(out.end(), info.begin(), info.end());
+    return out;
+}
+
+bool lwSays(const std::vector<std::string>& problems, const std::string& part) {
+    return problems.size() == 1 && problems[0].find(part) != std::string::npos;
+}
+
+void testLinkWatch() {
+    auto header = packet::decodeHeader(lwFrame("N8GM-1", "N8GM", true, false, {0x01}));
+    CHECK(header && header->destination == "N8GM-1" && header->source == "N8GM");
+    CHECK(header->command && !header->response && header->repeated && header->controlAt == 14);
+    CHECK(packet::decodeHeader(lwFrame("A", "B", false, true, {0x01}))->response);
+    CHECK(!packet::decodeHeader(packet::Bytes(14, 0x40)));   // Addresses but no control byte
+
+    connector::LinkWatch watch("N8GM-1");
+    watch.setPeer("N8GM", true);
+    auto iFrame = [](int ns, int nr, const std::string& info, const std::vector<std::pair<std::string, bool>>& via = {}) {
+        uint8_t control = static_cast<uint8_t>((ns << 1) | (nr << 5));
+        return lwFrame("N8GM-1", "N8GM", true, false, {control, 0xF0}, info, via);
+    };
+
+    // I frames: a repeat of one we had (N(R) may differ) is their resend
+    CHECK(watch.heard(iFrame(2, 0, "hello")).empty());
+    CHECK(watch.heard(iFrame(3, 0, "hello")).empty());        // Same text, next frame: fine
+    CHECK(lwSays(watch.heard(iFrame(2, 1, "hello")), "our acknowledgement didn't reach them"));
+    // Not from a session's station, or not to us, or heard before the digipeater repeated it
+    CHECK(watch.heard(lwFrame("N8GM-1", "K1ABC", true, false, {0x04, 0xF0}, "x")).empty());
+    CHECK(watch.heard(lwFrame("K1ABC", "N8GM", true, false, {0x09})).empty());
+    CHECK(watch.heard(iFrame(4, 0, "via", {{"WIDE1-1", false}})).empty());
+    CHECK(watch.heard(iFrame(4, 0, "via", {{"WIDE1-1", true}})).empty());   // The one direwolf acts on
+    CHECK(lwSays(watch.heard(iFrame(4, 0, "via", {{"WIDE1-1", true}})), "same frame again"));
+
+    // S frames, modulo 8: P/F is 0x10
+    CHECK(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x21})).empty());   // RR, a plain ack
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x31})), "No answer from N8GM in time"));
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "N8GM", true, false, {0x31})), "got no answer from us"));
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x29})), "(REJ)"));
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x25})), "(RNR)"));
+    CHECK(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x39})).size() == 2);   // REJ with F
+    // Modulo 128: P/F in the second byte
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x01, 0x07})), "No answer from N8GM"));
+    CHECK(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x01, 0x06})).empty());
+
+    // U frames
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "N8GM", true, false, {0x3F})), "connect again on an open link"));
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x87}, "abc")), "(FRMR)"));
+    CHECK(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x73})).empty());   // UA
+    watch.setPeer("K1ABC", false);
+    CHECK(lwSays(watch.heard(lwFrame("N8GM-1", "K1ABC", false, true, {0x1F})), "refused the connection"));
+
+    // No answer while frames wait: said once per stall, again after progress
+    using namespace std::chrono_literals;
+    auto t0 = connector::LinkWatch::Clock::now();
+    CHECK(watch.outstanding("N8GM", 2, t0).empty());
+    CHECK(watch.outstanding("N8GM", 3, t0 + 5s).empty());     // More sent: still the same wait
+    CHECK(lwSays(watch.outstanding("N8GM", 3, t0 + 10s), "No answer from N8GM for 10 s (3 frames"));
+    CHECK(watch.outstanding("N8GM", 3, t0 + 11s).empty());
+    CHECK(watch.outstanding("N8GM", 1, t0 + 12s).empty());    // Two acknowledged
+    CHECK(watch.outstanding("N8GM", 1, t0 + 21s).empty());
+    CHECK(lwSays(watch.outstanding("N8GM", 1, t0 + 22s), "(1 frame not acknowledged)"));
+    CHECK(watch.outstanding("N8GM", 0, t0 + 23s).empty());
+    CHECK(watch.outstanding("K9XYZ", 5, t0 + 60s).empty());   // No session with them
+
+    watch.removePeer("N8GM");
+    CHECK(watch.heard(lwFrame("N8GM-1", "N8GM", false, true, {0x29})).empty());
+}
+
 void testBtAddresses() {
     uint8_t uuid[16];
     CHECK(bt::parseUuid(bt::audioUuid, uuid) && uuid[0] == 0x39 && uuid[15] == 0xe6);
@@ -1264,6 +1350,7 @@ int runUnit() {
         {"Connected session commands and offline", testSessionCommands},
         {"Connected session out, close and no answer", testSessionOutgoing},
         {"Connected sessions when the radio stops", testSessionRadioDown},
+        {"Connected link watch", testLinkWatch},
         {"Bluetooth addresses and UUIDs", testBtAddresses},
         {"Bluetooth audio framing", testBtAudioFraming},
         {"Bluetooth GAIA control frames", testBtGaia},

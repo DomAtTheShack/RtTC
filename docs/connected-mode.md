@@ -137,6 +137,7 @@ Typed lines go to the session shown before the `>`. Commands:
 | `/s [CALL]` | List the sessions, or switch to `CALL`'s |
 | `/r [N] [SECS]` | Range test: `N` numbered lines (default 10), each `SECS` (default 5) after the last one's echo |
 | `/r stop` | Stop the range test |
+| `/l` | The link log: connects, disconnects and every problem below, with times |
 | `/h` | Help |
 
 Esc disconnects every session, then stops; Esc again stops now.
@@ -150,6 +151,25 @@ Esc disconnects every session, then stops; Esc again stops now.
   the end, how many were sent, echoed and lost (no echo within 120 s), with the shortest,
   longest and average round trip. AX.25 resends lost frames itself, so a weak path shows
   up as longer round trips, and a path that's too weak as `link lost`.
+
+**Link problems** show as dim `! HH:MM:SS` lines where they happen, in any session, and
+`/l` lists them all. They're things that don't happen on a healthy link:
+
+| Shown | Meaning |
+|---|---|
+| No answer from CALL in time: we asked again, and they answered | Our frame or their answer was lost; direwolf polled them (their answer had the F bit) |
+| No answer from CALL for 10 s (N frames not acknowledged) | Our frames are waiting and nothing is coming back |
+| CALL got no answer from us in time and asked again | Their timer ran out (they polled us): our answer didn't reach them |
+| CALL sent the same frame again: our acknowledgement didn't reach them | A resend of a frame we already had |
+| CALL missed a frame from us and asked for it again (REJ/SREJ) | One of our frames didn't get through |
+| CALL is busy and asked us to wait (RNR) | They can't take more yet |
+| CALL asked to connect again on an open link | Our answer to their connect was lost, or they restarted |
+| CALL refused the connection / says the link isn't connected (DM) | |
+| CALL rejected a frame as invalid (FRMR) | A protocol error |
+| Disconnected (no answer / link lost / direwolf stopped), not delivered, no echo | Also marked `!` in `/l` |
+
+direwolf only reports frames it hears, not its own connected-mode ones, so our own resends
+show up through the other station's answers (the F bit) or as no answer at all.
 
 ## Next
 
