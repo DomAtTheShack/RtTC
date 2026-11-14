@@ -158,9 +158,10 @@ private:
 class Transmitter {
 public:
     // threshold: a sample bigger than this (out of 32767) is sound. holdMs: silence that
-    // ends a transmission. leadMs: audio buffered before the first frame goes out, so a
-    // Bluetooth hiccup doesn't starve the radio part way through
-    explicit Transmitter(int threshold = 64, int holdMs = 300, int leadMs = 250);
+    // ends a transmission; kept short, as the radio stays keyed through it and a station
+    // answering straight away would be talking over it. leadMs: audio buffered before the
+    // first frame goes out, so a Bluetooth hiccup doesn't starve the radio part way through
+    explicit Transmitter(int threshold = 64, int holdMs = 100, int leadMs = 250);
 
     // Bytes to send to the audio channel (maybe none)
     Bytes feed(const int16_t* samples, size_t count);

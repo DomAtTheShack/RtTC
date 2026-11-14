@@ -528,6 +528,7 @@ bool runDirewolf(const Settings& settings, const string& rxName, const string& t
     session.destination = sendToAddress(settings);
     session.baud = settings.packetBaud;
     session.txDelayMs = settings.txDelayMs;
+    session.turnaroundWaitMs = settings.turnaroundWaitMs;
     session.fx25 = settings.fx25;
     bool transmitted = false;
     bool ok = runPacketSession(session, transmitted);
@@ -877,6 +878,27 @@ void pickTxDelay(Settings& settings) {
     if (choice >= 0) settings.txDelayMs = delays[choice];
 }
 
+void pickTurnaroundWait(Settings& settings) {
+    const int waits[] = {0, 300, 500, 750, 1000, 1500};
+    const char* notes[] = {
+        "answer as soon as the channel is quiet",
+        "the other radio is usually back on receive",
+        "for answering Bluetooth radios",
+        "",
+        "",
+        "",
+    };
+    vector<string> labels;
+    int current = 1;   // A value from settings.ini that isn't listed starts on 300
+    for (int i = 0; i < 6; i++) {
+        labels.push_back(padded(std::to_string(waits[i]) + " ms", 10) + notes[i]);
+        if (waits[i] == settings.turnaroundWaitMs) current = i;
+    }
+    int choice = ansi::select("Turnaround wait: after the channel goes quiet, before transmitting",
+                              labels, current, "Raise it if your replies to a station keep getting lost");
+    if (choice >= 0) settings.turnaroundWaitMs = waits[choice];
+}
+
 string audioValue(const string& name, const string& desc) {
     if (name.empty()) return "(not set)";
     return desc.empty() ? name : desc + "  [" + name + "]";
@@ -913,6 +935,8 @@ void settingsMenu(Settings& settings) {
         // For sending: direwolf decodes FX.25 whenever it hears it
         items.push_back({"FX.25", fx25Name(s.fx25), [&] { pickFx25(s); }});
         items.push_back({"Transmit delay", std::to_string(s.txDelayMs) + " ms", [&] { pickTxDelay(s); }});
+        items.push_back({"Turnaround wait", std::to_string(s.turnaroundWaitMs) + " ms",
+                         [&] { pickTurnaroundWait(s); }});
         if (bluetoothBuiltIn() || !s.bluetooth.empty())
             items.push_back({"Bluetooth radio", bluetoothDescription(s), [&] { pickBluetooth(s); }});
         // Bluetooth on Linux and macOS brings its own sound card. On Windows the modems use

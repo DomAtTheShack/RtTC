@@ -149,6 +149,7 @@ std::string formatSettings(const Settings& s) {
     out << "fx25=" << (s.fx25 <= 0 ? std::string("off") : s.fx25 == 1 ? std::string("auto")
                                                                          : std::to_string(s.fx25)) << "\n";
     out << "tx_delay=" << s.txDelayMs << "\n";
+    out << "turnaround_wait=" << s.turnaroundWaitMs << "\n";
     out << "callsign=" << s.callsign << "\n";
     out << "rx_audio=" << s.rxAudio << "\n";
     out << "tx_audio=" << s.txAudio << "\n";
@@ -208,6 +209,7 @@ Settings parseSettings(const std::string& text) {
             if (value == "16" || value == "32" || value == "64") s.fx25 = std::stoi(value);
         }
         else if (key == "tx_delay")     toInt(value, 0, maxTxDelayMs, s.txDelayMs);
+        else if (key == "turnaround_wait") toInt(value, 0, maxTurnaroundWaitMs, s.turnaroundWaitMs);
         else if (key == "callsign")     s.callsign = value;
         else if (key == "rig_model")    toInt(value, 1, 99999, s.rigModel);
         else if (key == "rx_audio")     s.rxAudio = value;

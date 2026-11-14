@@ -148,6 +148,7 @@ void testSettingsRoundTrip() {
     s.catPort = "/dev/ttyACM0";
     s.catBaud = 115200;
     s.txDelayMs = 750;
+    s.turnaroundWaitMs = 0;   // 0 is allowed, and isn't the default
     s.txAudioDesc = "C:\\Users\\me\\My Recordings: = test";   // Spaces, colons and = survive
 
     Settings back = parseSettings(formatSettings(s));
@@ -159,6 +160,8 @@ void testSettingsRoundTrip() {
     CHECK(back.catPort == "/dev/ttyACM0");
     CHECK(back.catBaud == 115200);
     CHECK(back.txDelayMs == 750);
+    CHECK(back.turnaroundWaitMs == 0);
+    CHECK(parseSettings("turnaround_wait=-5\n").turnaroundWaitMs == 300);   // Out of range: the default
     CHECK(parseSettings("tx_delay=9999\n").txDelayMs == 500);   // Out of range: the default
     CHECK(back.txAudioDesc == s.txAudioDesc);
 
@@ -453,6 +456,7 @@ void testDirewolfConfig() {
     CHECK(vox.find("MODEM 300 AB+\nFIX_BITS 1 AX25\n") != std::string::npos);
     CHECK(vox.find("MYCALL N0CALL-7\n") != std::string::npos);
     CHECK(vox.find("TXDELAY 50\n") != std::string::npos);   // 500 ms, in 10 ms steps
+    CHECK(vox.find("DWAIT 30\n") != std::string::npos);   // 300 ms
     s.txDelayMs = 1234;
     CHECK(direwolfConfig(s, "1", "2", 7001).find("TXDELAY 123\n") != std::string::npos);
     s.txDelayMs = 500;
@@ -571,6 +575,7 @@ void testConnectorConfig() {
     Json config = configToJson(s);
     CHECK(config["fx25"] == "auto");   // On by default
     CHECK(config["txDelay"] == 500);
+    CHECK(config["turnaroundWait"] == 300);
     CHECK(config["ptt"]["type"] == "vox");
     CHECK(!config.contains("retry") && !config.contains("holdForMainSeconds"));   // RC1's, gone
     CHECK(missingConfig(s) == "callsign");
@@ -590,6 +595,9 @@ void testConnectorConfig() {
     CHECK(applyConfig(s, {{"txDelay", "500"}}).field == "txDelay");
     change = applyConfig(s, {{"txDelay", 800}});
     CHECK(change.ok && change.restartRequired && s.txDelayMs == 800);
+    CHECK(applyConfig(s, {{"turnaroundWait", 2600}}).field == "turnaroundWait");
+    change = applyConfig(s, {{"turnaroundWait", 500}});
+    CHECK(change.ok && change.restartRequired && s.turnaroundWaitMs == 500);
     CHECK(config["radio"]["type"] == "none");
     CHECK(applyConfig(s, {{"radio", {{"type", "cat"}}}}).field == "radio.port");   // Needs a port
     CHECK(applyConfig(s, {{"ptt", {{"type", "cat"}}}}).field == "ptt");   // Needs radio control
@@ -1152,7 +1160,7 @@ BtSent btDecodeSent(const bt::Bytes& bytes) {
 }
 
 void testBtTransmitter() {
-    bt::Transmitter tx;   // Keys over 64, unkeys after 300 ms quiet, 250 ms lead
+    bt::Transmitter tx;   // Keys over 64, unkeys after 100 ms quiet, 250 ms lead
     std::vector<int16_t> quiet(640, 0), noise(640, 40);
     bt::Bytes sent;
     for (int i = 0; i < 50; i++) {
@@ -1164,7 +1172,7 @@ void testBtTransmitter() {
     CHECK(sent.empty() && !tx.keyed());
 
     // A second of tone: nothing until the lead is buffered, then frames of 4 SBC frames,
-    // then the end frame 300 ms after the tone stops
+    // then the end frame 100 ms after the tone stops
     std::vector<int16_t> tone = btTone(1000, 1.0);
     bt::Bytes first = tx.feed(tone.data(), 640 * 5);   // 100 ms
     CHECK(first.empty() && tx.keyed());
@@ -1181,7 +1189,7 @@ void testBtTransmitter() {
     BtSent result = btDecodeSent(sent);
     CHECK(!tx.keyed() && tx.transmissions() == 1);
     CHECK(result.ends == 1);
-    CHECK(std::fabs(result.seconds - 1.3) < 0.02);   // The tone and 300 ms of quiet
+    CHECK(std::fabs(result.seconds - 1.1) < 0.02);   // The tone and 100 ms of quiet
     CHECK(result.biggestFrame == 4 * 88);
 
     // finish() unkeys part way through; with nothing keyed it sends nothing

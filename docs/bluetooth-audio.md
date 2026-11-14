@@ -106,14 +106,19 @@ hidden.
 - **Receiving**: the radio sends SBC frames while its squelch is open. The bridge decodes
   them and plays them into `rtc_bt_rx`.
 - **Transmitting**: the modems play into `rtc_bt_tx`, which is digital silence (zeros)
-  between transmissions. A sample over 64 (of 32767) starts a transmission; 300 ms of
-  quiet ends it with the end frame, so the radio stays keyed through direwolf's and
-  the tuning tone's own gaps. The first 250 ms are buffered before anything is sent, so a
-  Bluetooth hiccup can't starve the radio part way through a packet. The 300 ms of quiet
-  at the end goes out too, like a short TXTAIL.
+  between transmissions. A sample over 64 (of 32767) starts a transmission; 100 ms of
+  quiet ends it with the end frame. The first 250 ms are buffered before anything is
+  sent, so a Bluetooth hiccup can't starve the radio part way through a packet. The
+  100 ms of quiet at the end goes out too, like a short TXTAIL. It was 300 ms, but the
+  radio stays keyed through it, and stations that answered straight away talked over it.
 - The radio takes a moment to key up once audio arrives, which eats into direwolf's
   **Transmit delay** (TXDELAY) flags. If the far end misses the start of packets, raise it
   in Settings (or `txDelay` for RadioConnector), e.g. to 750 ms.
+- After transmitting, the radio takes a moment to unkey and get back to receiving. A
+  station that answers in that moment loses the start of its answer, often the whole
+  packet. **Turnaround wait** (direwolf's DWAIT, 300 ms by default) on the *other*
+  station makes it wait that long after the channel goes quiet. If replies to a Bluetooth
+  radio keep getting lost (retries, links dropping), raise it there, e.g. to 500 ms.
 - **Stopping** always ends any transmission with the end frame.
 
 ### Audio channel framing

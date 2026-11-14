@@ -140,6 +140,7 @@ std::string direwolfConfig(const Settings& s, const std::string& rxDevice,
     if (s.fx25 > 0) config += "FX25TX " + std::to_string(s.fx25) + "\n";
     // In 10 ms steps, rounded. Sent as flags, so it also holds VOX and Bluetooth radios keyed
     config += "TXDELAY " + std::to_string((std::clamp(s.txDelayMs, 0, maxTxDelayMs) + 5) / 10) + "\n";
+    config += "DWAIT " + std::to_string((std::clamp(s.turnaroundWaitMs, 0, maxTurnaroundWaitMs) + 5) / 10) + "\n";
     switch (s.ptt) {
         case PttType::Vox:
             break;
