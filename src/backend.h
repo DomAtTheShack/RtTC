@@ -153,6 +153,9 @@ const char* direwolfPath();
 const char* atestPath();
 const char* genPacketsPath();
 std::string executableDir();          // "" if unknown
+// How many processes run this program (e.g. "direwolf"; ".exe" is added on Windows), this
+// one included if it does. -1 if it can't tell
+int countProcesses(const std::string& name);
 
 } // namespace os
 

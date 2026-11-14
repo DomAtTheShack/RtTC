@@ -1,6 +1,7 @@
 #include "backend.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -21,6 +22,7 @@
     #include <windows.h>
     #include <mmsystem.h>
     #include <io.h>
+    #include <tlhelp32.h>
 #else
     #include <arpa/inet.h>
     #include <netinet/in.h>
@@ -30,6 +32,7 @@
         #include <CoreFoundation/CoreFoundation.h>
         #include <IOKit/IOKitLib.h>
         #include <IOKit/serial/IOSerialKeys.h>
+        #include <libproc.h>
         #include <mach-o/dyld.h>
         #include <pulse/pulseaudio.h>
         #include <pulse/simple.h>
@@ -39,6 +42,7 @@
     #include <cerrno>
     #include <climits>
     #include <csignal>
+    #include <dirent.h>
     #include <fcntl.h>
     #include <fstream>
     #include <glob.h>
@@ -690,6 +694,24 @@ TerminalSize terminalSize() {
     CONSOLE_SCREEN_BUFFER_INFO info;
     if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) return {24, 80};
     return {info.srWindow.Bottom - info.srWindow.Top + 1, info.srWindow.Right - info.srWindow.Left + 1};
+}
+
+int countProcesses(const std::string& name) {
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return -1;
+    std::string wanted = name + ".exe";
+    auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    wanted = lower(wanted);
+    int count = 0;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof entry;
+    for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry))
+        if (lower(narrow(entry.szExeFile)) == wanted) count++;
+    CloseHandle(snapshot);
+    return count;
 }
 
 std::string executableDir() {
@@ -1433,6 +1455,33 @@ std::string executableDir() {
 #endif
     size_t slash = full.rfind('/');
     return slash == std::string::npos ? "" : full.substr(0, slash);
+}
+
+int countProcesses(const std::string& name) {
+#ifdef __APPLE__
+    int bytes = proc_listallpids(nullptr, 0);
+    if (bytes <= 0) return -1;
+    std::vector<pid_t> pids(static_cast<size_t>(bytes) / sizeof(pid_t) + 16);
+    int n = proc_listallpids(pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
+    if (n <= 0) return -1;
+    int count = 0;
+    char found[PROC_PIDPATHINFO_MAXSIZE];
+    for (int i = 0; i < n; i++)
+        if (proc_name(pids[static_cast<size_t>(i)], found, sizeof found) > 0 && name == found) count++;
+    return count;
+#else
+    DIR* proc = opendir("/proc");
+    if (!proc) return -1;
+    int count = 0;
+    while (dirent* entry = readdir(proc)) {
+        if (!std::isdigit(static_cast<unsigned char>(entry->d_name[0]))) continue;
+        std::ifstream comm(std::string("/proc/") + entry->d_name + "/comm");
+        std::string found;
+        if (std::getline(comm, found) && found == name) count++;
+    }
+    closedir(proc);
+    return count;
+#endif
 }
 
 #endif

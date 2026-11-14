@@ -35,6 +35,13 @@ public:
     std::string modemCaptureDevice() const { return audio ? audio->modemCaptureDevice() : ""; }
     std::string modemPlaybackDevice() const { return audio ? audio->modemPlaybackDevice() : ""; }
 
+    // Gain in percent on what the radio hears (before the modems) and what the modems send
+    // (before the radio). Takes effect at once, from any thread
+    void setGain(int rxPercent, int txPercent) {
+        rxGain = rxPercent;
+        txGain = txPercent;
+    }
+
     bool connected() const { return running && !lost; }
     const std::string& error() const { return lastError; }
 
@@ -51,6 +58,7 @@ private:
     std::atomic<bool> running{false};
     std::atomic<bool> lost{false};
     std::atomic<bool> stopping{false};
+    std::atomic<int> rxGain{100}, txGain{100};
     std::function<void(const std::string&)> log;
     std::string lastError;
 };

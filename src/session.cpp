@@ -18,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include "ansi.hpp"
 #include "backend.h"
@@ -25,6 +26,7 @@
 #include "Connector/link_watch.h"
 #include "Connector/packet.h"
 #include "Connector/sessions.h"
+#include "Radio/modem.h"
 
 namespace {
 
@@ -376,6 +378,15 @@ public:
         redraw();
     }
 
+    // Shown before the prompt in its own color, e.g. "[N8GM-1 level 48 ok]". "" = none
+    void setBadge(const std::string& text, ansi::Color color) {
+        if (text == badge && color == badgeColor) return;
+        clear();
+        badge = text;
+        badgeColor = color;
+        redraw();
+    }
+
     void add(char ch) {
         line += ch;
         if (typing && !isContinuationByte(ch)) shownChars++;
@@ -436,16 +447,23 @@ private:
 
     void redraw() {
         if (typing) {
+            shownChars = 0;
+            if (!badge.empty()) {
+                ansi::print(badgeColor, "%s ", badge.c_str());
+                shownChars += countChars(badge) + 1;
+            }
             ansi::print(sentColor, "%s%s", prompt.c_str(), line.c_str());
-            shownChars = countChars(prompt) + countChars(line);
+            shownChars += countChars(prompt) + countChars(line);
         }
         ansi::flush();
     }
 
     bool typing;
     std::string prompt = "> ";
+    std::string badge;
+    ansi::Color badgeColor = ansi::Color::Gray;
     std::string line;
-    int shownChars = 0;   // Characters of prompt and line on screen, for clear()
+    int shownChars = 0;   // Characters of badge, prompt and line on screen, for clear()
 };
 
 // direwolf for one session: its output is kept, and shown only if it fails
@@ -464,12 +482,23 @@ public:
         if (event.type == Event::Type::Output) {
             log += event.text;
             if (log.size() > 6000) log.erase(0, log.size() - 6000);
+            // Whole lines only: output comes in pieces
+            partial += event.text;
+            size_t end;
+            while ((end = partial.find('\n')) != std::string::npos) {
+                if (auto level = parseAudioLevel(partial.substr(0, end))) levels.push_back(*level);
+                partial.erase(0, end + 1);
+            }
+            if (partial.size() > 1000) partial.clear();
         } else if (event.type == Event::Type::OutputEnded) {
             ended = true;
         }
     }
 
     bool hasEnded() const { return ended; }
+
+    // Audio levels of frames heard since the last call
+    std::vector<AudioLevel> takeLevels() { return std::exchange(levels, {}); }
 
     enum class Wait { Up, Esc, Failed };
 
@@ -526,6 +555,8 @@ private:
     EventQueue& events;
     Modem modem;
     std::string log;
+    std::string partial;               // An unfinished line of output
+    std::vector<AudioLevel> levels;
     bool ended = false;
 };
 
@@ -794,7 +825,9 @@ public:
     void onAgw(const agw::Frame& frame, connector::TimePoint now) {
         if (frame.kind == 'K' && !frame.data.empty()) {
             packet::Bytes bytes(frame.data.begin() + 1, frame.data.end());   // After the port byte
-            for (const std::string& problem : watch.heard(bytes)) report(problem);
+            std::vector<std::string> notes;
+            for (const std::string& problem : watch.heard(bytes, now, &notes)) report(problem);
+            for (const std::string& note : notes) remember(note);
         } else if (frame.kind == 'Y') {
             int count = static_cast<int>(agw::outstandingCount(frame));
             for (const std::string& problem : watch.outstanding(packet::normalizeCallsign(frame.to), count, now))
@@ -802,6 +835,33 @@ public:
         }
         sessions.onAgw(frame, now);
         updatePrompt();
+    }
+
+    // A frame direwolf decoded, and how loud it was
+    void onLevel(const AudioLevel& heard) {
+        std::string call = packet::normalizeCallsign(heard.station);
+        if (call.empty()) call = heard.station;
+        std::string text = std::to_string(heard.level);
+        if (heard.mark >= 0 && heard.space >= 0)
+            text += " (" + std::to_string(heard.mark) + "/" + std::to_string(heard.space) + ")";
+        remember("Level " + call + " " + text);
+        LevelRating rating = rateLevel(heard.level);
+        auto old = levels.find(call);
+        bool worse = old == levels.end() ? rating != LevelRating::Good
+                                         : static_cast<int>(rating) > static_cast<int>(rateLevel(old->second.level));
+        levels[call] = heard;
+        lastHeard = call;
+        if (worse) {
+            bool quiet = heard.level < 50;
+            std::string fix = quiet ? "Turn up " + call + "'s transmit level or this station's receive level"
+                                    : "Turn down " + call + "'s transmit level or this station's receive level";
+            fix += p.bluetooth ? (quiet ? " (/rx + here)" : " (/rx - here)")
+                               : " (the radio sound card's recording level here)";
+            screen.note(rating == LevelRating::Bad ? errorColor : statusColor,
+                        "  " + call + "'s frames arrive " + (quiet ? "quiet" : "loud") + ": level " + text +
+                        ", about 50 is best. " + fix);
+        }
+        updateBadge();
     }
 
     void tick(connector::TimePoint now) {
@@ -1010,6 +1070,8 @@ private:
             screen.note(noteColor, "Link log, " + std::to_string(problems) +
                                        (problems == 1 ? " problem" : " problems") + " (marked !):");
             for (const std::string& line : log) screen.note(noteColor, "  " + line);
+        } else if (name == "rx" || name == "tx") {
+            gainCommand(name == "rx", args);
         } else if (name == "h" || name == "help" || name == "?") {
             const char* help[] = {
                 "Typed lines go to the session shown before the >.",
@@ -1019,8 +1081,14 @@ private:
                 "/r [N] [SECS]        range test: N numbered lines (10), each SECS (5) after the last",
                 "                     one's echo. The far end must be RadioConnectorCli in Connected mode",
                 "/r stop              stop the range test",
-                "/l                   the link log: connects, disconnects and anything that went",
-                "                     wrong (resends, no answers, missed frames), marked !",
+                "/l                   the link log: connects, disconnects, each frame's audio level,",
+                "                     and anything that went wrong (resends, no answers), marked !",
+                "/rx [+|-|N]          Bluetooth radio: receive gain, in % (+/- steps 10). Raise it if",
+                "                     frames heard here are quiet. Saved",
+                "/tx [+|-|N]          Bluetooth radio: transmit gain, in %. Raise it if the other",
+                "                     station says our frames are quiet. Saved",
+                "The [CALL level N] before the prompt is how loud the last frame from them was",
+                "here; about 50 is best (30-70 ok)",
                 "Esc                  disconnect everything and stop. Esc again stops now",
                 "To a Radio Connector: after a long reply type M (more), N (new chat) or B (bye)",
             };
@@ -1088,9 +1156,62 @@ private:
     }
 
     void updatePrompt() {
+        updateBadge();
         auto it = peers.find(active);
         if (it == peers.end()) return screen.setPrompt("> ");
         screen.setPrompt(it->second.call + (it->second.open ? "> " : " (connecting)> "));
+    }
+
+    // The latest level of the station being talked to, else of the last station heard
+    void updateBadge() {
+        auto peer = peers.find(active);
+        std::string call = peer != peers.end() && levels.count(peer->second.call) ? peer->second.call : lastHeard;
+        auto it = levels.find(call);
+        if (it == levels.end()) return screen.setBadge("", noteColor);
+        const AudioLevel& heard = it->second;
+        std::string text = "[" + call + " level " + std::to_string(heard.level);
+        if (heard.mark >= 0 && heard.space >= 0)
+            text += " (" + std::to_string(heard.mark) + "/" + std::to_string(heard.space) + ")";
+        switch (rateLevel(heard.level)) {
+            case LevelRating::Good: return screen.setBadge(text + " ok]", goodColor);
+            case LevelRating::Fair: return screen.setBadge(text + (heard.level < 50 ? " low]" : " high]"), statusColor);
+            case LevelRating::Bad:  return screen.setBadge(text + (heard.level < 50 ? " too low]" : " too high]"), errorColor);
+        }
+    }
+
+    // /rx and /tx: show, step (+ or -, by 10) or set the Bluetooth radio's gain
+    void gainCommand(bool receive, const std::vector<std::string>& args) {
+        const char* name = receive ? "/rx" : "/tx";
+        if (!p.bluetooth || !p.setGain)
+            return screen.note(statusColor, std::string(name) + " is for a Bluetooth radio. With a sound card, set its " +
+                                                (receive ? "recording" : "playback") + " level in the computer's sound settings");
+        int& gain = receive ? rxGain : txGain;
+        int most = receive ? maxBtRxGain : maxBtTxGain;
+        int wanted = gain;
+        if (args.empty()) {
+            wanted = gain;
+        } else if (args[0] == "+" || args[0] == "-") {
+            wanted = gain + (args[0] == "+" ? 10 : -10);
+        } else {
+            std::string number = args[0];
+            if (!number.empty() && number.back() == '%') number.pop_back();
+            char* end = nullptr;
+            long value = std::strtol(number.c_str(), &end, 10);
+            if (number.empty() || *end != '\0')
+                return screen.note(statusColor, std::string(name) + " [+ | - | " + std::to_string(minBtGain) + "-" +
+                                                    std::to_string(most) + "]");
+            wanted = static_cast<int>(std::clamp(value, 0L, 100000L));
+        }
+        wanted = std::clamp(wanted, minBtGain, most);
+        if (wanted != gain) {
+            gain = wanted;
+            p.setGain(rxGain, txGain);
+        }
+        std::string what = receive ? "Receive gain (what the radio hears, into direwolf): "
+                                   : "Transmit gain (direwolf's audio, into the radio): ";
+        screen.note(noteColor, what + std::to_string(gain) + "% (" + std::to_string(minBtGain) + "-" +
+                                   std::to_string(most) + ", saved)");
+        remember(std::string(receive ? "Receive" : "Transmit") + " gain " + std::to_string(gain) + "%");
     }
 
     const ConnectedSession& p;
@@ -1101,8 +1222,11 @@ private:
     std::string active;                  // Where typed lines go
     Range range;
     bool linkFailed = false;
-    static constexpr size_t maxLog = 500;
+    static constexpr size_t maxLog = 2000;   // Every frame's level goes in, so room for a long range test
     std::deque<std::string> log;         // For /log: "HH:MM:SS  text", problems as "! text"
+    std::map<std::string, AudioLevel> levels;   // Latest per station heard
+    std::string lastHeard;
+    int rxGain = p.btRxGain, txGain = p.btTxGain;
     connector::LinkWatch watch{""};
     connector::Sessions sessions;        // Last: its hooks use the members above
 };
@@ -1140,6 +1264,7 @@ bool runConnectedSession(const ConnectedSession& p, bool& transmitted) {
         auto now = Clock::now();
         if (event) {
             direwolf.handle(*event);
+            for (const AudioLevel& level : direwolf.takeLevels()) chat.onLevel(level);
             if (direwolf.hasEnded()) {
                 ok = false;
                 failure = "direwolf stopped unexpectedly";

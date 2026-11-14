@@ -170,8 +170,43 @@ std::string direwolfConfig(const Settings& s, const std::string& rxDevice,
 }
 
 std::vector<std::string> direwolfArgs(const std::string& configPath) {
-    // -t 0: no colours. -q hd: quiet; packets are shown from the KISS port
-    return {os::direwolfPath(), "-c", configPath, "-t", "0", "-q", "hd"};
+    // -t 0: no colours. -q d: no packet descriptions; packets come from the KISS or AGW
+    // port. The "heard" lines stay on, for each frame's audio level (parseAudioLevel)
+    return {os::direwolfPath(), "-c", configPath, "-t", "0", "-q", "d"};
+}
+
+std::optional<AudioLevel> parseAudioLevel(const std::string& line) {
+    static const std::string marker = " audio level = ";
+    size_t at = line.find(marker);
+    if (at == std::string::npos) return std::nullopt;
+    AudioLevel out;
+    std::string who = line.substr(0, at);
+    size_t start = who.find_first_not_of(" \t\r");
+    if (start == std::string::npos) return std::nullopt;
+    who.erase(0, start);
+    // "Digipeater WIDE1-1", and "WIDE1-1 (probably N0CALL)" when a digipeater was heard
+    if (who.rfind("Digipeater ", 0) == 0) who.erase(0, 11);
+    size_t space = who.find(' ');
+    if (space != std::string::npos) who.erase(space);
+    if (who.empty()) return std::nullopt;
+    out.station = who;
+    // "48(14/12)", "48(+3)" or "48"
+    const char* text = line.c_str() + at + marker.size();
+    int level = 0, mark = 0, spaceLevel = 0;
+    if (std::sscanf(text, "%d(%d/%d)", &level, &mark, &spaceLevel) == 3) {
+        out.mark = mark;
+        out.space = spaceLevel;
+    } else if (std::sscanf(text, "%d", &level) != 1) {
+        return std::nullopt;
+    }
+    out.level = level;
+    return out;
+}
+
+LevelRating rateLevel(int level) {
+    if (level >= 30 && level <= 70) return LevelRating::Good;
+    if (level >= 20 && level <= 90) return LevelRating::Fair;
+    return LevelRating::Bad;
 }
 
 std::vector<std::string> atestArgs(const Settings& s, const std::string& wavPath) {

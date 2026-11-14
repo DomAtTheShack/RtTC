@@ -119,6 +119,11 @@ hidden.
   packet. **Turnaround wait** (direwolf's DWAIT, 300 ms by default) on the *other*
   station makes it wait that long after the channel goes quiet. If replies to a Bluetooth
   radio keep getting lost (retries, links dropping), raise it there, e.g. to 500 ms.
+- **Gain**: `bt_rx_gain` scales what the radio hears before the modems get it, and
+  `bt_tx_gain` what the modems send before it's encoded for the radio, in percent (100 =
+  unchanged). Set them on the Connected screen with `/rx` and `/tx` while watching the
+  audio levels (docs/connected-mode.md). Transmit stops at 200%: direwolf plays at half
+  scale, so more would clip.
 - **Stopping** always ends any transmission with the end frame.
 
 ### Audio channel framing

@@ -15,7 +15,8 @@ void LinkWatch::setPeer(const std::string& call, bool open) { peers[call].open =
 
 void LinkWatch::removePeer(const std::string& call) { peers.erase(call); }
 
-std::vector<std::string> LinkWatch::heard(const packet::Bytes& frame) {
+std::vector<std::string> LinkWatch::heard(const packet::Bytes& frame, Clock::time_point now,
+                                         std::vector<std::string>* notes) {
     std::vector<std::string> problems;
     auto header = packet::decodeHeader(frame);
     // Only frames from a station we have a session with, to us, as direwolf acts on them
@@ -27,6 +28,10 @@ std::vector<std::string> LinkWatch::heard(const packet::Bytes& frame) {
     const std::string& call = header->source;
     size_t at = header->controlAt;
     uint8_t c = frame[at];
+    // Quiet until this frame: nothing heard from them for idleLimit
+    bool wasQuiet = now != Clock::time_point{} && peer.lastFrame != Clock::time_point{} &&
+                    now - peer.lastFrame >= idleLimit;
+    if (now != Clock::time_point{}) peer.lastFrame = now;
 
     if ((c & 0x01) == 0) {
         // I frame. N(S) is in bits 1-3 (modulo 8) or 1-7 (modulo 128); its low bits and the
@@ -53,10 +58,17 @@ std::vector<std::string> LinkWatch::heard(const packet::Bytes& frame) {
         if (type == 1) problems.push_back(call + " is busy and asked us to wait (RNR)");
         if (type == 2) problems.push_back(call + " missed a frame from us and asked for it again (REJ)");
         if (type == 3) problems.push_back(call + " missed a frame from us and asked for it again (SREJ)");
-        if (pf && header->command)
+        // On a quiet link a poll is the keep-alive check, ours only with nothing of ours waiting
+        // (otherwise it's asking about frames). A plain RR, as REJ/SREJ/RNR are problems anyway
+        bool keepAlive = type == 0 && wasQuiet && (header->command || peer.waiting == 0);
+        if (pf && keepAlive) {
+            if (notes) notes->push_back(header->command ? call + " checked the quiet link is still there"
+                                                        : "Checked the quiet link to " + call + " is still there: they answered");
+        } else if (pf && header->command) {
             problems.push_back(call + " got no answer from us in time and asked again");
-        if (pf && header->response)
+        } else if (pf && header->response) {
             problems.push_back("No answer from " + call + " in time: we asked again, and they answered");
+        }
         return problems;
     }
 

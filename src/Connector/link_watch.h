@@ -29,8 +29,15 @@ public:
     void setPeer(const std::string& call, bool open);
     void removePeer(const std::string& call);
 
-    // A frame direwolf heard, without the FCS. Returns what went wrong, if anything
-    std::vector<std::string> heard(const packet::Bytes& frame);
+    // A poll after the link has been quiet this long is direwolf checking the link is still
+    // there (T3, every 5 minutes by default), not a resend
+    static constexpr std::chrono::seconds idleLimit{60};
+
+    // A frame direwolf heard, without the FCS. Returns what went wrong, if anything. A
+    // keep-alive poll on a quiet link isn't a problem: it goes in notes, if given. now's
+    // default turns that check off
+    std::vector<std::string> heard(const packet::Bytes& frame, Clock::time_point now = {},
+                                   std::vector<std::string>* notes = nullptr);
     // direwolf's count of our frames call hasn't acknowledged yet
     std::vector<std::string> outstanding(const std::string& call, int count, Clock::time_point now);
 
@@ -41,6 +48,7 @@ private:
         int waiting = 0;                  // Frames not acknowledged
         Clock::time_point waitingSince{};
         bool stallReported = false;
+        Clock::time_point lastFrame{};    // When we last heard from them; {} = not yet
     };
 
     std::string own;
