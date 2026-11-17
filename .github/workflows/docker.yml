@@ -1,0 +1,70 @@
+name: Docker
+
+# Builds the radio-host image (docker/Dockerfile) and checks what's inside it. Runs on
+# PRs that touch the build, and by hand.
+on:
+  pull_request:
+    paths:
+      - "docker/**"
+      - "src/**"
+      - "CMakeLists.txt"
+      - ".dockerignore"
+      - ".github/workflows/docker.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Radio host image (linux/amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          tags: rttc:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The programs are there and start
+        run: |
+          docker run --rm rttc:ci RadioConnector --version
+          docker run --rm rttc:ci sh -c 'command -v direwolf && command -v RadioConnectorCli'
+          # Every program finds its shared libraries (Hamlib from /usr/local/lib)
+          docker run --rm rttc:ci sh -c 'for p in RadioConnector RadioConnectorCli direwolf; do
+              ldd "$(command -v $p)" | grep "not found" && exit 1; done; true'
+
+      - name: It dials the main program and says hello
+        run: |
+          # A stand-in main program: accept one connection and keep the first line
+          python3 - <<'EOF' &
+          import socket
+          s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+          s.bind(("127.0.0.1", 9000)); s.listen(1); s.settimeout(60)
+          conn, _ = s.accept(); conn.settimeout(30)
+          data = b""
+          while b"\n" not in data:
+              data += conn.recv(65536)
+          open("hello.json", "wb").write(data.split(b"\n")[0])
+          EOF
+          sleep 1
+          docker run -d --name rttc --network host -e MUS_ADDR=127.0.0.1:9000 rttc:ci
+          for i in $(seq 1 30); do [ -s hello.json ] && break; sleep 1; done
+          docker logs rttc
+          cat hello.json
+          python3 -c 'import json; m = json.load(open("hello.json")); assert m["type"] == "hello" and m["body"]["program"] == "radio-connector", m'
+
+      - name: The radio compose file is valid
+        run: MUS_ADDR=127.0.0.1:9000 docker compose -f docker/compose.radio.yaml config --quiet
+
+      - if: always()
+        run: docker rm -f rttc || true

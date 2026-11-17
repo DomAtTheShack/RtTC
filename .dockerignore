@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.claude
+cmake-build-*
+build
+hamlib-w64-*
+hamlib-*-linux
+direwolf
+minimodem
+X6100Control
+docker/radio.env
