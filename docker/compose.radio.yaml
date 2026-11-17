@@ -1,0 +1,36 @@
+# A radio host: RadioConnector + direwolf in one container, with the sound card and serial
+# ports passed in. See docs/docker.md.
+#   cp radio.env.example radio.env && $EDITOR radio.env
+#   docker compose -f compose.radio.yaml --env-file radio.env up -d --build
+
+services:
+  rttc:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rttc:latest
+    restart: unless-stopped
+    # Host networking: MUS_ADDR may be 127.0.0.1 when MUS runs on this machine, and
+    # direwolf's AGW/KISS ports stay on localhost
+    network_mode: host
+    environment:
+      MUS_ADDR: ${MUS_ADDR:?set MUS_ADDR to the MUS host's IPv4:port, e.g. 192.168.1.10:9000}
+    # The whole /dev, with access limited to sound cards and USB serial ports. Unlike
+    # listing devices one by one, this keeps working when a cable (e.g. an AIOC) is
+    # unplugged and comes back under another name
+    volumes:
+      - rttc-data:/data
+      - /dev:/dev
+      - /run/udev:/run/udev:ro
+    device_cgroup_rules:
+      - "c 116:* rmw"   # ALSA sound cards (/dev/snd/*)
+      - "c 188:* rmw"   # USB serial adapters (/dev/ttyUSB*)
+      - "c 166:* rmw"   # USB CDC ACM ports, e.g. AIOC (/dev/ttyACM*)
+    # The host's group IDs that own /dev/snd and the serial ports
+    group_add:
+      - "${AUDIO_GID:-29}"
+      - "${DIALOUT_GID:-20}"
+    command: ${RTTC_ARGS:-}
+
+volumes:
+  rttc-data:
